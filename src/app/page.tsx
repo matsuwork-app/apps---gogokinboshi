@@ -1,65 +1,129 @@
-import Image from "next/image";
+import { createClient } from "@/lib/supabase/server";
+import RankingTable from "@/components/RankingTable";
+import PeriodFilter from "@/components/PeriodFilter";
+import RankingModal from "@/components/RankingModal";
+import type { RankingRow } from "@/types";
 
-export default function Home() {
+function formatSeconds(s: number) {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h}時間${m}分`;
+  return `${m}分`;
+}
+
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ from?: string; to?: string }>;
+}) {
+  const params = await searchParams;
+  const supabase = await createClient();
+
+  const now = new Date();
+  const defaultFrom = new Date(now.getFullYear() - 1, now.getMonth(), 1)
+    .toISOString()
+    .slice(0, 10);
+  const defaultTo = now.toISOString().slice(0, 10);
+
+  const fromDate = params.from ?? defaultFrom;
+  const toDate = params.to ?? defaultTo;
+
+  const { data: members } = await supabase
+    .from("members")
+    .select("id, name")
+    .order("created_at");
+
+  if (!members || members.length === 0) {
+    return (
+      <div className="space-y-4">
+        <h1 className="text-2xl font-bold">得点ランキング</h1>
+        <p className="text-muted-foreground text-center py-12">
+          メンバーが登録されていません。
+          <br />
+          まず「メンバー」ページからメンバーを追加してください。
+        </p>
+      </div>
+    );
+  }
+
+  const [
+    { data: goalRows },
+    { data: intervalRows },
+    { data: eventRows },
+    { data: participationRows },
+  ] = await Promise.all([
+    supabase
+      .from("goals")
+      .select("member_id, matches!inner(started_at)")
+      .gte("matches.started_at", `${fromDate}T00:00:00`)
+      .lte("matches.started_at", `${toDate}T23:59:59`),
+    supabase
+      .from("playing_intervals")
+      .select("member_id, started_at, ended_at, matches!inner(started_at)")
+      .gte("matches.started_at", `${fromDate}T00:00:00`)
+      .lte("matches.started_at", `${toDate}T23:59:59`)
+      .not("ended_at", "is", null),
+    supabase
+      .from("events")
+      .select("id")
+      .gte("event_date", fromDate)
+      .lte("event_date", toDate),
+    supabase
+      .from("event_participants")
+      .select("member_id, events!inner(event_date)")
+      .gte("events.event_date", fromDate)
+      .lte("events.event_date", toDate),
+  ]);
+
+  const totalEvents = eventRows?.length ?? 0;
+
+  const goalMap = new Map<string, number>();
+  (goalRows ?? []).forEach(({ member_id }) => {
+    goalMap.set(member_id, (goalMap.get(member_id) ?? 0) + 1);
+  });
+
+  const secondsMap = new Map<string, number>();
+  (intervalRows ?? []).forEach(({ member_id, started_at, ended_at }) => {
+    if (!ended_at) return;
+    const sec = Math.floor(
+      (new Date(ended_at).getTime() - new Date(started_at).getTime()) / 1000
+    );
+    secondsMap.set(member_id, (secondsMap.get(member_id) ?? 0) + sec);
+  });
+
+  const participationMap = new Map<string, number>();
+  (participationRows ?? []).forEach(({ member_id }) => {
+    participationMap.set(member_id, (participationMap.get(member_id) ?? 0) + 1);
+  });
+
+  const sorted = [...members]
+    .map((m) => ({
+      member_id: m.id,
+      name: m.name,
+      total_goals: goalMap.get(m.id) ?? 0,
+      participated_events: participationMap.get(m.id) ?? 0,
+      total_events: totalEvents,
+      total_seconds: secondsMap.get(m.id) ?? 0,
+      rank: 0,
+    }))
+    .sort((a, b) => b.total_goals - a.total_goals);
+
+  let rank = 1;
+  sorted.forEach((row, i) => {
+    if (i > 0 && row.total_goals < sorted[i - 1].total_goals) rank = i + 1;
+    row.rank = rank;
+  });
+
+  const ranking: RankingRow[] = sorted;
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">得点ランキング</h1>
+        <RankingModal />
+      </div>
+      <PeriodFilter from={fromDate} to={toDate} />
+      <RankingTable ranking={ranking} formatSeconds={formatSeconds} />
     </div>
   );
 }
