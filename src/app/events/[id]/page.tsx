@@ -4,11 +4,12 @@ import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Play, CheckCircle, Clock } from "lucide-react";
+import { Plus, Play, CheckCircle, Clock, Pause } from "lucide-react";
 
 const STATUS_LABEL = {
   pending: { label: "未開始", icon: Clock, color: "secondary" },
   active: { label: "進行中", icon: Play, color: "default" },
+  paused: { label: "一時停止中", icon: Pause, color: "secondary" },
   finished: { label: "終了", icon: CheckCircle, color: "outline" },
 } as const;
 
