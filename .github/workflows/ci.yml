@@ -45,6 +45,14 @@ jobs:
       - name: Verify generated database types
         run: npm run db:types:check
 
+      - name: Upload generated database types on drift
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: generated-database-types
+          path: /tmp/gogokinboshi-database.generated.ts
+          if-no-files-found: ignore
+
       - run: npm run build
 
       - name: Run full match lifecycle E2E
