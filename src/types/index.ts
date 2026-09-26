@@ -4,7 +4,11 @@ export type Member = Database["public"]["Tables"]["members"]["Row"];
 export type Event = Database["public"]["Tables"]["events"]["Row"];
 export type EventParticipant =
   Database["public"]["Tables"]["event_participants"]["Row"];
+export type EventTeam = Database["public"]["Tables"]["event_teams"]["Row"];
+export type EventTeamMember =
+  Database["public"]["Tables"]["event_team_members"]["Row"];
 export type Match = Database["public"]["Tables"]["matches"]["Row"];
+export type MatchTeam = Database["public"]["Tables"]["match_teams"]["Row"];
 export type MatchLineup = Database["public"]["Tables"]["match_lineups"]["Row"];
 export type Goal = Database["public"]["Tables"]["goals"]["Row"];
 export type PlayingInterval =

@@ -32,18 +32,21 @@ export type Database = {
           id: string;
           event_date: string;
           notes: string | null;
+          team_count: number;
           created_at: string;
         };
         Insert: {
           id?: string;
           event_date: string;
           notes?: string | null;
+          team_count?: number;
           created_at?: string;
         };
         Update: {
           id?: string;
           event_date?: string;
           notes?: string | null;
+          team_count?: number;
           created_at?: string;
         };
         Relationships: [];
@@ -84,6 +87,57 @@ export type Database = {
           },
         ];
       };
+      event_teams: {
+        Row: {
+          id: string;
+          event_id: string;
+          team_code: "A" | "B" | "C" | "D";
+          display_name: string;
+          sort_order: number;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          event_id: string;
+          team_code: "A" | "B" | "C" | "D";
+          display_name: string;
+          sort_order: number;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          event_id?: string;
+          team_code?: "A" | "B" | "C" | "D";
+          display_name?: string;
+          sort_order?: number;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
+      event_team_members: {
+        Row: {
+          id: string;
+          event_id: string;
+          event_team_id: string;
+          member_id: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          event_id: string;
+          event_team_id: string;
+          member_id: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          event_id?: string;
+          event_team_id?: string;
+          member_id?: string;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
       matches: {
         Row: {
           id: string;
@@ -92,6 +146,8 @@ export type Database = {
           status: "pending" | "active" | "paused" | "finished";
           started_at: string | null;
           ended_at: string | null;
+          elapsed_seconds: number;
+          active_started_at: string | null;
           created_at: string;
         };
         Insert: {
@@ -101,6 +157,8 @@ export type Database = {
           status?: "pending" | "active" | "paused" | "finished";
           started_at?: string | null;
           ended_at?: string | null;
+          elapsed_seconds?: number;
+          active_started_at?: string | null;
           created_at?: string;
         };
         Update: {
@@ -110,6 +168,8 @@ export type Database = {
           status?: "pending" | "active" | "paused" | "finished";
           started_at?: string | null;
           ended_at?: string | null;
+          elapsed_seconds?: number;
+          active_started_at?: string | null;
           created_at?: string;
         };
         Relationships: [
@@ -128,6 +188,8 @@ export type Database = {
           match_id: string;
           member_id: string;
           team: "A" | "B";
+          match_team_id: string;
+          is_playing: boolean;
           created_at: string;
         };
         Insert: {
@@ -135,6 +197,8 @@ export type Database = {
           match_id: string;
           member_id: string;
           team: "A" | "B";
+          match_team_id: string;
+          is_playing?: boolean;
           created_at?: string;
         };
         Update: {
@@ -142,6 +206,8 @@ export type Database = {
           match_id?: string;
           member_id?: string;
           team?: "A" | "B";
+          match_team_id?: string;
+          is_playing?: boolean;
           created_at?: string;
         };
         Relationships: [
@@ -160,6 +226,33 @@ export type Database = {
             referencedColumns: ["id"];
           },
         ];
+      };
+      match_teams: {
+        Row: {
+          id: string;
+          match_id: string;
+          event_id: string;
+          event_team_id: string;
+          side: 1 | 2;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          match_id: string;
+          event_id: string;
+          event_team_id: string;
+          side: 1 | 2;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          match_id?: string;
+          event_id?: string;
+          event_team_id?: string;
+          side?: 1 | 2;
+          created_at?: string;
+        };
+        Relationships: [];
       };
       goals: {
         Row: {
@@ -247,7 +340,34 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
-      [_ in never]: never;
+      create_event_with_teams: {
+        Args: { p_event_date: string; p_notes: string | null; p_teams: Json };
+        Returns: string;
+      };
+      create_match_with_teams: {
+        Args: {
+          p_event_id: string;
+          p_event_team_ids: string[];
+          p_lineups?: Json | null;
+        };
+        Returns: string;
+      };
+      transition_match: {
+        Args: {
+          p_match_id: string;
+          p_expected_status: string;
+          p_next_status: string;
+        };
+        Returns: Database["public"]["Tables"]["matches"]["Row"];
+      };
+      set_player_playing: {
+        Args: {
+          p_match_id: string;
+          p_member_id: string;
+          p_is_playing: boolean;
+        };
+        Returns: undefined;
+      };
     };
     Enums: {
       [_ in never]: never;

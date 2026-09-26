@@ -1,28 +1,66 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
-import { createClient } from "@/lib/supabase/client";
-import type { Match, PlayerState } from "@/types";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { toast } from "sonner";
-import { cn } from "@/lib/utils";
 import Link from "next/link";
-import { ArrowLeft, Play, Square, Pause, RotateCcw, Plus, Minus } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ArrowLeft,
+  Minus,
+  Pause,
+  Play,
+  Plus,
+  RotateCcw,
+  Square,
+} from "lucide-react";
+import { toast } from "sonner";
+
+import {
+  addGoal,
+  removeGoal,
+  setPlayerPlaying,
+  transitionMatch,
+} from "@/app/actions/matches";
+import PasscodeDialog from "@/components/PasscodeDialog";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { calculateElapsedSeconds } from "@/lib/matches/timer";
+import { cn } from "@/lib/utils";
+import type { Match, Member } from "@/types";
+
+export type MatchPlayer = {
+  member: Member;
+  side: 1 | 2;
+  goals: number;
+  isPlaying: boolean;
+};
+
+export type MatchTeamDisplay = {
+  matchTeamId: string;
+  eventTeamId: string;
+  side: 1 | 2;
+  teamCode: "A" | "B" | "C" | "D";
+  displayName: string;
+};
+
+type RestingTeam = Pick<MatchTeamDisplay, "teamCode" | "displayName">;
 
 type Props = {
   match: Match;
-  initialPlayers: PlayerState[];
+  initialPlayers: MatchPlayer[];
   initialGoalIds: Record<string, string[]>;
   eventId: string;
+  teams: MatchTeamDisplay[];
+  restingTeams: RestingTeam[];
+  initialCanManage: boolean;
 };
 
 function formatElapsed(seconds: number) {
-  const m = Math.floor(seconds / 60)
-    .toString()
-    .padStart(2, "0");
-  const s = (seconds % 60).toString().padStart(2, "0");
-  return `${m}:${s}`;
+  const minutes = Math.floor(seconds / 60).toString().padStart(2, "0");
+  const remainingSeconds = (seconds % 60).toString().padStart(2, "0");
+  return `${minutes}:${remainingSeconds}`;
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "通信に失敗しました";
 }
 
 export default function MatchClient({
@@ -30,366 +68,372 @@ export default function MatchClient({
   initialPlayers,
   initialGoalIds,
   eventId,
+  teams,
+  restingTeams,
+  initialCanManage,
 }: Props) {
-  const supabase = createClient();
-  const [players, setPlayers] = useState<PlayerState[]>(initialPlayers);
+  const [players, setPlayers] = useState(initialPlayers);
   const [goalIds, setGoalIds] =
     useState<Record<string, string[]>>(initialGoalIds);
-  const [status, setStatus] = useState<Match["status"]>(match.status);
-  const [elapsed, setElapsed] = useState(0);
-  const [isLoading, setIsLoading] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const startTimeRef = useRef<number | null>(null);
+  const [matchState, setMatchState] = useState(match);
+  const [elapsed, setElapsed] = useState(match.elapsed_seconds);
+  const [canManage, setCanManage] = useState(initialCanManage);
+  const [passcodeOpen, setPasscodeOpen] = useState(false);
+  const [isTransitioning, setIsTransitioning] = useState(false);
+  const [pendingPlayingIds, setPendingPlayingIds] = useState<Set<string>>(
+    new Set()
+  );
+  const [pendingGoalIds, setPendingGoalIds] = useState<Set<string>>(
+    new Set()
+  );
+
+  const status = matchState.status;
 
   useEffect(() => {
-    if (status === "active" && match.started_at) {
-      const base = Math.floor(
-        (Date.now() - new Date(match.started_at).getTime()) / 1000
-      );
-      setElapsed(base);
-      startTimeRef.current = Date.now() - base * 1000;
-      timerRef.current = setInterval(() => {
-        setElapsed(
-          Math.floor((Date.now() - startTimeRef.current!) / 1000)
-        );
-      }, 1000);
-    }
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, []);
-
-  const scoreA = players
-    .filter((p) => p.team === "A")
-    .reduce((s, p) => s + p.goals, 0);
-  const scoreB = players
-    .filter((p) => p.team === "B")
-    .reduce((s, p) => s + p.goals, 0);
-
-  // --- キックオフ ---
-  const handleStart = useCallback(async () => {
-    setIsLoading(true);
-    const now = new Date().toISOString();
-
-    const { error: matchError } = await supabase
-      .from("matches")
-      .update({ status: "active", started_at: now })
-      .eq("id", match.id);
-    if (matchError) { toast.error(matchError.message); setIsLoading(false); return; }
-
-    const playingPlayers = players.filter((p) => p.isPlaying);
-    if (playingPlayers.length > 0) {
-      const { data: intervals, error: intError } = await supabase
-        .from("playing_intervals")
-        .insert(
-          playingPlayers.map((p) => ({ match_id: match.id, member_id: p.member.id, started_at: now }))
-        )
-        .select("id, member_id");
-      if (intError) { toast.error(intError.message); setIsLoading(false); return; }
-
-      setPlayers((prev) =>
-        prev.map((p) => {
-          const interval = intervals?.find((i) => i.member_id === p.member.id);
-          return interval ? { ...p, openIntervalId: interval.id } : p;
+    const updateElapsed = () => {
+      setElapsed(
+        calculateElapsedSeconds({
+          elapsedSeconds: matchState.elapsed_seconds,
+          activeStartedAt: matchState.active_started_at,
         })
       );
-    }
+    };
 
-    setStatus("active");
-    startTimeRef.current = Date.now();
-    timerRef.current = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startTimeRef.current!) / 1000));
-    }, 1000);
-    setIsLoading(false);
-  }, [match.id, players, supabase]);
+    updateElapsed();
+    if (status !== "active") return;
 
-  // --- 一時停止 ---
-  const handlePause = useCallback(async () => {
-    setIsLoading(true);
-    const now = new Date().toISOString();
+    const intervalId = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [matchState.active_started_at, matchState.elapsed_seconds, status]);
 
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
+  const orderedTeams = useMemo(
+    () => [...teams].sort((first, second) => first.side - second.side),
+    [teams]
+  );
+  const playersBySide = useMemo(
+    () => ({
+      1: players.filter((player) => player.side === 1),
+      2: players.filter((player) => player.side === 2),
+    }),
+    [players]
+  );
+  const scores = useMemo(
+    () => ({
+      1: playersBySide[1].reduce((sum, player) => sum + player.goals, 0),
+      2: playersBySide[2].reduce((sum, player) => sum + player.goals, 0),
+    }),
+    [playersBySide]
+  );
 
-    const { error: matchError } = await supabase
-      .from("matches")
-      .update({ status: "paused" })
-      .eq("id", match.id);
-    if (matchError) { toast.error(matchError.message); setIsLoading(false); return; }
-
-    // 全オープンインターバルをクローズ
-    const openIds = players.map((p) => p.openIntervalId).filter(Boolean) as string[];
-    if (openIds.length > 0) {
-      await supabase
-        .from("playing_intervals")
-        .update({ ended_at: now })
-        .in("id", openIds);
-    }
-
-    setStatus("paused");
-    setPlayers((prev) => prev.map((p) => ({ ...p, openIntervalId: null })));
-    setIsLoading(false);
-  }, [match.id, players, supabase]);
-
-  // --- 再開 ---
-  const handleResume = useCallback(async () => {
-    setIsLoading(true);
-    const now = new Date().toISOString();
-
-    const { error: matchError } = await supabase
-      .from("matches")
-      .update({ status: "active" })
-      .eq("id", match.id);
-    if (matchError) { toast.error(matchError.message); setIsLoading(false); return; }
-
-    // 出場中メンバーのインターバルを再開
-    const playingPlayers = players.filter((p) => p.isPlaying);
-    let updatedPlayers = players;
-    if (playingPlayers.length > 0) {
-      const { data: intervals, error: intError } = await supabase
-        .from("playing_intervals")
-        .insert(
-          playingPlayers.map((p) => ({ match_id: match.id, member_id: p.member.id, started_at: now }))
-        )
-        .select("id, member_id");
-      if (intError) { toast.error(intError.message); setIsLoading(false); return; }
-
-      updatedPlayers = players.map((p) => {
-        const interval = intervals?.find((i) => i.member_id === p.member.id);
-        return interval ? { ...p, openIntervalId: interval.id } : p;
-      });
-      setPlayers(updatedPlayers);
-    }
-
-    setStatus("active");
-    // elapsed は一時停止時点の値を維持したまま再開
-    startTimeRef.current = Date.now() - elapsed * 1000;
-    timerRef.current = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - startTimeRef.current!) / 1000));
-    }, 1000);
-    setIsLoading(false);
-  }, [match.id, players, elapsed, supabase]);
-
-  // --- 試合終了 ---
-  const handleStop = useCallback(async () => {
-    if (!confirm("試合を終了しますか？")) return;
-    setIsLoading(true);
-    const now = new Date().toISOString();
-
-    if (timerRef.current) clearInterval(timerRef.current);
-
-    const { error: matchError } = await supabase
-      .from("matches")
-      .update({ status: "finished", ended_at: now })
-      .eq("id", match.id);
-    if (matchError) { toast.error(matchError.message); setIsLoading(false); return; }
-
-    const openIds = players.map((p) => p.openIntervalId).filter(Boolean) as string[];
-    if (openIds.length > 0) {
-      await supabase
-        .from("playing_intervals")
-        .update({ ended_at: now })
-        .in("id", openIds);
-    }
-
-    setStatus("finished");
-    setPlayers((prev) => prev.map((p) => ({ ...p, openIntervalId: null })));
-    setIsLoading(false);
-    toast.success("試合終了！");
-  }, [match.id, players, supabase]);
-
-  // --- 出場トグル ---
-  const handlePlayingToggle = useCallback(
-    async (playerId: string) => {
-      if (status === "finished") return;
-      const player = players.find((p) => p.member.id === playerId);
-      if (!player) return;
-      const now = new Date().toISOString();
-
-      if (player.isPlaying) {
-        // ベンチへ → 試合中ならインターバルをクローズ
-        if (status === "active" && player.openIntervalId) {
-          await supabase
-            .from("playing_intervals")
-            .update({ ended_at: now })
-            .eq("id", player.openIntervalId);
-        }
-        setPlayers((prev) =>
-          prev.map((p) =>
-            p.member.id === playerId
-              ? { ...p, isPlaying: false, openIntervalId: null }
-              : p
-          )
-        );
-      } else {
-        // 出場へ → 試合中ならインターバルを開始（一時停止中は状態のみ変更）
-        let newIntervalId: string | null = null;
-        if (status === "active") {
-          const { data } = await supabase
-            .from("playing_intervals")
-            .insert({ match_id: match.id, member_id: playerId, started_at: now })
-            .select("id")
-            .single();
-          newIntervalId = data?.id ?? null;
-        }
-        setPlayers((prev) =>
-          prev.map((p) =>
-            p.member.id === playerId
-              ? { ...p, isPlaying: true, openIntervalId: newIntervalId }
-              : p
-          )
-        );
+  const handleTransition = useCallback(
+    async (nextStatus: Match["status"]) => {
+      if (!canManage || isTransitioning || status === "finished") return;
+      if (
+        nextStatus === "finished" &&
+        !window.confirm("試合を終了しますか？")
+      ) {
+        return;
       }
-    },
-    [match.id, players, status, supabase]
+
+      setIsTransitioning(true);
+      try {
+        const result = await transitionMatch(
+          eventId,
+          matchState.id,
+          status,
+          nextStatus
+        );
+        if (result.error || !result.data) {
+          toast.error(result.error ?? "試合状態を更新できませんでした");
+          return;
+        }
+
+        setMatchState(result.data);
+        setElapsed(
+          calculateElapsedSeconds({
+            elapsedSeconds: result.data.elapsed_seconds,
+            activeStartedAt: result.data.active_started_at,
+          })
+        );
+        if (nextStatus === "finished") toast.success("試合終了！");
+      } catch (error) {
+        toast.error(errorMessage(error));
+      } finally {
+        setIsTransitioning(false);
+      }
+    }, [canManage, eventId, isTransitioning, matchState.id, status]
   );
 
-  // --- 得点追加 ---
+  const handlePlayingToggle = useCallback(
+    async (memberId: string) => {
+      if (!canManage || status === "finished" || pendingPlayingIds.has(memberId)) {
+        return;
+      }
+      const player = players.find((item) => item.member.id === memberId);
+      if (!player) return;
+
+      const nextIsPlaying = !player.isPlaying;
+      setPendingPlayingIds((current) => new Set(current).add(memberId));
+      setPlayers((current) =>
+        current.map((item) =>
+          item.member.id === memberId
+            ? { ...item, isPlaying: nextIsPlaying }
+            : item
+        )
+      );
+
+      try {
+        const result = await setPlayerPlaying(
+          matchState.id,
+          memberId,
+          nextIsPlaying
+        );
+        if (result.error) throw new Error(result.error);
+      } catch (error) {
+        setPlayers((current) =>
+          current.map((item) =>
+            item.member.id === memberId
+              ? { ...item, isPlaying: player.isPlaying }
+              : item
+          )
+        );
+        toast.error(errorMessage(error));
+      } finally {
+        setPendingPlayingIds((current) => {
+          const next = new Set(current);
+          next.delete(memberId);
+          return next;
+        });
+      }
+    }, [canManage, matchState.id, pendingPlayingIds, players, status]
+  );
+
   const handleGoalAdd = useCallback(
-    async (playerId: string) => {
-      if (status === "finished") return;
-      const { data, error } = await supabase
-        .from("goals")
-        .insert({ match_id: match.id, member_id: playerId })
-        .select("id")
-        .single();
-      if (error) { toast.error(error.message); return; }
+    async (memberId: string) => {
+      if (!canManage || status === "finished" || pendingGoalIds.has(memberId)) {
+        return;
+      }
 
-      setPlayers((prev) =>
-        prev.map((p) =>
-          p.member.id === playerId ? { ...p, goals: p.goals + 1 } : p
+      const optimisticId = `optimistic-${crypto.randomUUID()}`;
+      setPendingGoalIds((current) => new Set(current).add(memberId));
+      setPlayers((current) =>
+        current.map((player) =>
+          player.member.id === memberId
+            ? { ...player, goals: player.goals + 1 }
+            : player
         )
       );
-      setGoalIds((prev) => ({
-        ...prev,
-        [playerId]: [...(prev[playerId] ?? []), data.id],
+      setGoalIds((current) => ({
+        ...current,
+        [memberId]: [...(current[memberId] ?? []), optimisticId],
       }));
-    },
-    [match.id, status, supabase]
+
+      try {
+        const result = await addGoal(matchState.id, memberId);
+        if (result.error || !result.id) {
+          throw new Error(result.error ?? "得点を保存できませんでした");
+        }
+        setGoalIds((current) => ({
+          ...current,
+          [memberId]: (current[memberId] ?? []).map((id) =>
+            id === optimisticId ? result.id! : id
+          ),
+        }));
+      } catch (error) {
+        setPlayers((current) =>
+          current.map((player) =>
+            player.member.id === memberId
+              ? { ...player, goals: Math.max(0, player.goals - 1) }
+              : player
+          )
+        );
+        setGoalIds((current) => ({
+          ...current,
+          [memberId]: (current[memberId] ?? []).filter(
+            (id) => id !== optimisticId
+          ),
+        }));
+        toast.error(errorMessage(error));
+      } finally {
+        setPendingGoalIds((current) => {
+          const next = new Set(current);
+          next.delete(memberId);
+          return next;
+        });
+      }
+    }, [canManage, matchState.id, pendingGoalIds, status]
   );
 
-  // --- 得点削除 ---
   const handleGoalRemove = useCallback(
-    async (playerId: string) => {
-      if (status === "finished") return;
-      const ids = goalIds[playerId] ?? [];
-      if (ids.length === 0) return;
-      const lastId = ids[ids.length - 1];
+    async (memberId: string) => {
+      if (!canManage || status === "finished" || pendingGoalIds.has(memberId)) {
+        return;
+      }
+      const memberGoalIds = goalIds[memberId] ?? [];
+      const goalId = memberGoalIds.at(-1);
+      if (!goalId) return;
 
-      const { error } = await supabase.from("goals").delete().eq("id", lastId);
-      if (error) { toast.error(error.message); return; }
-
-      setPlayers((prev) =>
-        prev.map((p) =>
-          p.member.id === playerId ? { ...p, goals: Math.max(0, p.goals - 1) } : p
+      setPendingGoalIds((current) => new Set(current).add(memberId));
+      setPlayers((current) =>
+        current.map((player) =>
+          player.member.id === memberId
+            ? { ...player, goals: Math.max(0, player.goals - 1) }
+            : player
         )
       );
-      setGoalIds((prev) => ({
-        ...prev,
-        [playerId]: ids.slice(0, -1),
+      setGoalIds((current) => ({
+        ...current,
+        [memberId]: (current[memberId] ?? []).slice(0, -1),
       }));
-    },
-    [goalIds, status, supabase]
-  );
 
-  const teamA = players.filter((p) => p.team === "A");
-  const teamB = players.filter((p) => p.team === "B");
+      try {
+        const result = await removeGoal(matchState.id, memberId, goalId);
+        if (result.error) throw new Error(result.error);
+      } catch (error) {
+        setPlayers((current) =>
+          current.map((player) =>
+            player.member.id === memberId
+              ? { ...player, goals: player.goals + 1 }
+              : player
+          )
+        );
+        setGoalIds((current) => ({
+          ...current,
+          [memberId]: [...(current[memberId] ?? []), goalId],
+        }));
+        toast.error(errorMessage(error));
+      } finally {
+        setPendingGoalIds((current) => {
+          const next = new Set(current);
+          next.delete(memberId);
+          return next;
+        });
+      }
+    }, [canManage, goalIds, matchState.id, pendingGoalIds, status]
+  );
 
   const badgeVariant =
-    status === "active" ? "default" :
-    status === "finished" ? "outline" : "secondary";
+    status === "active"
+      ? "default"
+      : status === "finished"
+        ? "outline"
+        : "secondary";
   const badgeLabel =
-    status === "pending" ? "未開始" :
-    status === "active" ? "進行中" :
-    status === "paused" ? "一時停止中" : "終了";
+    status === "pending"
+      ? "未開始"
+      : status === "active"
+        ? "進行中"
+        : status === "paused"
+          ? "一時停止中"
+          : "終了";
 
   return (
     <div className="space-y-4 pb-8">
-      {/* ヘッダー */}
       <div className="flex items-center gap-2">
-        <Link href={`/events/${eventId}`} className="text-muted-foreground">
+        <Link
+          href={`/events/${eventId}`}
+          className="text-muted-foreground"
+          aria-label="イベント詳細へ戻る"
+        >
           <ArrowLeft size={20} />
         </Link>
-        <h1 className="text-xl font-bold flex-1">
-          第{match.match_number}試合
+        <h1 className="flex-1 text-xl font-bold">
+          第{matchState.match_number}試合
         </h1>
         <Badge variant={badgeVariant}>{badgeLabel}</Badge>
       </div>
 
-      {/* スコアボード */}
       <div className="rounded-xl border bg-card p-4 text-center">
         <div className="flex items-center justify-center gap-4">
-          <div>
-            <p className="text-sm text-blue-600 font-semibold">Aチーム</p>
-            <p className="text-5xl font-bold text-blue-600">{scoreA}</p>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold text-blue-600">
+              {orderedTeams[0]?.displayName}
+            </p>
+            <p className="text-5xl font-bold text-blue-600">{scores[1]}</p>
           </div>
           <div className="text-muted-foreground">
             <p className="text-2xl font-light">-</p>
             {status !== "pending" && (
-              <p className={cn(
-                "text-lg font-mono font-medium",
-                status === "paused" && "opacity-50"
-              )}>
+              <p
+                className={cn(
+                  "font-mono text-lg font-medium",
+                  status === "paused" && "opacity-50"
+                )}
+                aria-label={`経過時間 ${formatElapsed(elapsed)}`}
+              >
                 {formatElapsed(elapsed)}
               </p>
             )}
           </div>
-          <div>
-            <p className="text-sm text-green-600 font-semibold">Bチーム</p>
-            <p className="text-5xl font-bold text-green-600">{scoreB}</p>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-semibold text-green-600">
+              {orderedTeams[1]?.displayName}
+            </p>
+            <p className="text-5xl font-bold text-green-600">{scores[2]}</p>
           </div>
         </div>
+        {restingTeams.length > 0 && (
+          <p className="mt-3 border-t pt-3 text-xs text-muted-foreground">
+            休憩: {restingTeams.map((team) => team.displayName).join("・")}
+          </p>
+        )}
       </div>
 
-      {/* タイマー操作ボタン */}
-      {status === "pending" && (
+      {!canManage && status !== "finished" && (
         <Button
-          onClick={handleStart}
-          disabled={isLoading}
-          className="w-full h-14 text-lg font-bold bg-green-600 hover:bg-green-700"
+          onClick={() => setPasscodeOpen(true)}
+          className="h-14 w-full text-lg font-bold"
+        >
+          記録を開始
+        </Button>
+      )}
+
+      {canManage && status === "pending" && (
+        <Button
+          onClick={() => handleTransition("active")}
+          disabled={isTransitioning}
+          className="h-14 w-full bg-green-600 text-lg font-bold hover:bg-green-700"
         >
           <Play size={20} className="mr-2" />
           キックオフ
         </Button>
       )}
-      {status === "active" && (
+      {canManage && status === "active" && (
         <div className="flex gap-2">
           <Button
-            onClick={handlePause}
-            disabled={isLoading}
-            className="flex-1 h-14 text-base font-bold bg-amber-500 hover:bg-amber-600 text-white border-0"
+            onClick={() => handleTransition("paused")}
+            disabled={isTransitioning}
+            className="h-14 flex-1 border-0 bg-amber-500 text-base font-bold text-white hover:bg-amber-600"
           >
             <Pause size={20} className="mr-2" />
             一時停止
           </Button>
           <Button
-            onClick={handleStop}
-            disabled={isLoading}
+            onClick={() => handleTransition("finished")}
+            disabled={isTransitioning}
             variant="destructive"
-            className="flex-1 h-14 text-base font-bold"
+            className="h-14 flex-1 text-base font-bold"
           >
             <Square size={20} className="mr-2" />
             試合終了
           </Button>
         </div>
       )}
-      {status === "paused" && (
+      {canManage && status === "paused" && (
         <div className="flex gap-2">
           <Button
-            onClick={handleResume}
-            disabled={isLoading}
-            className="flex-1 h-14 text-base font-bold bg-green-600 hover:bg-green-700"
+            onClick={() => handleTransition("active")}
+            disabled={isTransitioning}
+            className="h-14 flex-1 bg-green-600 text-base font-bold hover:bg-green-700"
           >
             <RotateCcw size={20} className="mr-2" />
             再開
           </Button>
           <Button
-            onClick={handleStop}
-            disabled={isLoading}
+            onClick={() => handleTransition("finished")}
+            disabled={isTransitioning}
             variant="destructive"
-            className="flex-1 h-14 text-base font-bold"
+            className="h-14 flex-1 text-base font-bold"
           >
             <Square size={20} className="mr-2" />
             試合終了
@@ -397,33 +441,41 @@ export default function MatchClient({
         </div>
       )}
 
-      {/* プレイヤーカード */}
-      {[
-        { team: "A" as const, teamPlayers: teamA, color: "blue" as const },
-        { team: "B" as const, teamPlayers: teamB, color: "green" as const },
-      ].map(({ team, teamPlayers, color }) => (
-        <section key={team} className="space-y-2">
-          <h2
-            className={cn(
-              "font-bold text-sm px-1",
-              color === "blue" ? "text-blue-600" : "text-green-600"
-            )}
-          >
-            {team}チーム
-          </h2>
-          {teamPlayers.map((p) => (
-            <PlayerCard
-              key={p.member.id}
-              player={p}
-              color={color}
-              matchStatus={status}
-              onPlayingToggle={handlePlayingToggle}
-              onGoalAdd={handleGoalAdd}
-              onGoalRemove={handleGoalRemove}
-            />
-          ))}
-        </section>
-      ))}
+      {orderedTeams.map((team, index) => {
+        const color = index === 0 ? "blue" : "green";
+        return (
+          <section key={team.matchTeamId} className="space-y-2">
+            <h2
+              className={cn(
+                "px-1 text-sm font-bold",
+                color === "blue" ? "text-blue-600" : "text-green-600"
+              )}
+            >
+              {team.displayName}
+            </h2>
+            {playersBySide[team.side].map((player) => (
+              <PlayerCard
+                key={player.member.id}
+                player={player}
+                color={color}
+                canManage={canManage}
+                matchStatus={status}
+                isPlayingPending={pendingPlayingIds.has(player.member.id)}
+                isGoalPending={pendingGoalIds.has(player.member.id)}
+                onPlayingToggle={handlePlayingToggle}
+                onGoalAdd={handleGoalAdd}
+                onGoalRemove={handleGoalRemove}
+              />
+            ))}
+          </section>
+        );
+      })}
+
+      <PasscodeDialog
+        open={passcodeOpen}
+        onClose={() => setPasscodeOpen(false)}
+        onConfirm={() => setCanManage(true)}
+      />
     </div>
   );
 }
@@ -431,88 +483,108 @@ export default function MatchClient({
 function PlayerCard({
   player,
   color,
+  canManage,
   matchStatus,
+  isPlayingPending,
+  isGoalPending,
   onPlayingToggle,
   onGoalAdd,
   onGoalRemove,
 }: {
-  player: PlayerState;
+  player: MatchPlayer;
   color: "blue" | "green";
+  canManage: boolean;
   matchStatus: Match["status"];
+  isPlayingPending: boolean;
+  isGoalPending: boolean;
   onPlayingToggle: (id: string) => void;
   onGoalAdd: (id: string) => void;
   onGoalRemove: (id: string) => void;
 }) {
-  const isFinished = matchStatus === "finished";
+  const isReadOnly = !canManage || matchStatus === "finished";
+  const playingLabel = player.isPlaying ? "出場中" : "ベンチ";
+  const playingClassName = cn(
+    "min-h-11 w-16 rounded-lg border py-2 text-xs font-bold transition-colors",
+    player.isPlaying
+      ? color === "blue"
+        ? "border-blue-500 bg-blue-500 text-white"
+        : "border-green-500 bg-green-500 text-white"
+      : "border-muted bg-background text-muted-foreground"
+  );
 
   return (
     <div
       className={cn(
-        "rounded-xl border p-3 flex items-center gap-3 transition-colors",
+        "flex items-center gap-3 rounded-xl border p-3 transition-colors",
         player.isPlaying
           ? color === "blue"
-            ? "bg-blue-50 border-blue-200 dark:bg-blue-950"
-            : "bg-green-50 border-green-200 dark:bg-green-950"
-          : "bg-muted/40 border-muted"
+            ? "border-blue-200 bg-blue-50 dark:bg-blue-950"
+            : "border-green-200 bg-green-50 dark:bg-green-950"
+          : "border-muted bg-muted/40"
       )}
     >
-      {/* 出場トグル */}
-      <button
-        onClick={() => !isFinished && onPlayingToggle(player.member.id)}
-        disabled={isFinished}
-        className={cn(
-          "w-16 py-2 rounded-lg text-xs font-bold transition-colors border",
-          player.isPlaying
-            ? color === "blue"
-              ? "bg-blue-500 text-white border-blue-500"
-              : "bg-green-500 text-white border-green-500"
-            : "bg-background text-muted-foreground border-muted"
-        )}
-      >
-        {player.isPlaying ? "出場中" : "ベンチ"}
-      </button>
+      {isReadOnly ? (
+        <span className={playingClassName}>{playingLabel}</span>
+      ) : (
+        <button
+          type="button"
+          onClick={() => onPlayingToggle(player.member.id)}
+          disabled={isPlayingPending}
+          className={playingClassName}
+          aria-label={`${player.member.name}を${player.isPlaying ? "ベンチ" : "出場中"}に変更`}
+        >
+          {playingLabel}
+        </button>
+      )}
 
-      {/* 名前 */}
       <span
         className={cn(
-          "flex-1 font-semibold text-base",
+          "flex-1 text-base font-semibold",
           !player.isPlaying && "text-muted-foreground"
         )}
       >
         {player.member.name}
       </span>
 
-      {/* 得点操作 */}
       <div className="flex items-center gap-2">
-        <button
-          onClick={() => !isFinished && onGoalRemove(player.member.id)}
-          disabled={isFinished || player.goals === 0}
-          className={cn(
-            "w-10 h-10 rounded-full border text-lg font-bold transition-colors",
-            player.goals > 0 && !isFinished
-              ? "bg-background hover:bg-muted"
-              : "bg-muted text-muted-foreground"
-          )}
+        {!isReadOnly && (
+          <button
+            type="button"
+            onClick={() => onGoalRemove(player.member.id)}
+            disabled={isGoalPending || player.goals === 0}
+            className={cn(
+              "h-11 w-11 rounded-full border text-lg font-bold transition-colors",
+              player.goals > 0
+                ? "bg-background hover:bg-muted"
+                : "bg-muted text-muted-foreground"
+            )}
+            aria-label={`${player.member.name}の得点を1点取り消す`}
+          >
+            <Minus size={16} className="mx-auto" />
+          </button>
+        )}
+        <span
+          className="w-8 text-center text-xl font-bold tabular-nums"
+          aria-label={`${player.member.name} ${player.goals}得点`}
         >
-          <Minus size={16} className="mx-auto" />
-        </button>
-        <span className="w-8 text-center font-bold text-xl tabular-nums">
           {player.goals}
         </span>
-        <button
-          onClick={() => !isFinished && onGoalAdd(player.member.id)}
-          disabled={isFinished}
-          className={cn(
-            "w-10 h-10 rounded-full border text-lg font-bold transition-colors",
-            !isFinished
-              ? color === "blue"
-                ? "bg-blue-500 text-white hover:bg-blue-600 border-blue-500"
-                : "bg-green-500 text-white hover:bg-green-600 border-green-500"
-              : "bg-muted text-muted-foreground"
-          )}
-        >
-          <Plus size={16} className="mx-auto" />
-        </button>
+        {!isReadOnly && (
+          <button
+            type="button"
+            onClick={() => onGoalAdd(player.member.id)}
+            disabled={isGoalPending}
+            className={cn(
+              "h-11 w-11 rounded-full border text-lg font-bold text-white transition-colors",
+              color === "blue"
+                ? "border-blue-500 bg-blue-500 hover:bg-blue-600"
+                : "border-green-500 bg-green-500 hover:bg-green-600"
+            )}
+            aria-label={`${player.member.name}に1点追加`}
+          >
+            <Plus size={16} className="mx-auto" />
+          </button>
+        )}
       </div>
     </div>
   );

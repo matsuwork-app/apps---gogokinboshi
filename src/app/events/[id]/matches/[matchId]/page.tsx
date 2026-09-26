@@ -1,6 +1,32 @@
-import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
-import MatchClient from "./MatchClient";
+
+import { hasManagerSession } from "@/lib/auth";
+import { createClient } from "@/lib/supabase/server";
+import type { EventTeam, Member } from "@/types";
+
+import MatchClient, {
+  type MatchPlayer,
+  type MatchTeamDisplay,
+} from "./MatchClient";
+
+type LineupRow = {
+  member_id: string;
+  match_team_id: string;
+  is_playing: boolean;
+  members: Member | Member[] | null;
+};
+
+type MatchTeamRow = {
+  id: string;
+  event_team_id: string;
+  side: number;
+  team: EventTeam | EventTeam[] | null;
+};
+
+function normalizeOne<T>(value: T | T[] | null): T | null {
+  if (Array.isArray(value)) return value[0] ?? null;
+  return value;
+}
 
 export default async function MatchPage({
   params,
@@ -14,46 +40,104 @@ export default async function MatchPage({
     .from("matches")
     .select("*")
     .eq("id", matchId)
+    .eq("event_id", eventId)
     .single();
   if (!match) notFound();
 
-  const { data: lineups } = await supabase
-    .from("match_lineups")
-    .select("member_id, team, members(id, name)")
-    .eq("match_id", matchId);
+  const [
+    { data: lineupData, error: lineupError },
+    { data: goals, error: goalsError },
+    { data: matchTeamData, error: matchTeamError },
+    { data: eventTeamData, error: eventTeamError },
+    canManage,
+  ] = await Promise.all([
+    supabase
+      .from("match_lineups")
+      .select("member_id,match_team_id,is_playing,members(*)")
+      .eq("match_id", matchId),
+    supabase
+      .from("goals")
+      .select("id,member_id")
+      .eq("match_id", matchId)
+      .order("scored_at"),
+    supabase
+      .from("match_teams")
+      .select(
+        "id,event_team_id,side,team:event_teams!match_teams_event_team_fkey(id,event_id,team_code,display_name,sort_order,created_at)"
+      )
+      .eq("match_id", matchId)
+      .order("side", { ascending: true }),
+    supabase
+      .from("event_teams")
+      .select("id,event_id,team_code,display_name,sort_order,created_at")
+      .eq("event_id", eventId)
+      .order("sort_order", { ascending: true }),
+    hasManagerSession(),
+  ]);
 
-  const { data: goals } = await supabase
-    .from("goals")
-    .select("id, member_id")
-    .eq("match_id", matchId)
-    .order("scored_at");
+  const loadError =
+    lineupError ?? goalsError ?? matchTeamError ?? eventTeamError;
+  if (loadError) {
+    throw new Error(`試合データの読み込みに失敗しました: ${loadError.message}`);
+  }
 
-  const { data: openIntervals } = await supabase
-    .from("playing_intervals")
-    .select("id, member_id")
-    .eq("match_id", matchId)
-    .is("ended_at", null);
+  const matchTeamRows = (matchTeamData ?? []) as unknown as MatchTeamRow[];
+  const matchTeams: MatchTeamDisplay[] = matchTeamRows.flatMap((row) => {
+    const team = normalizeOne(row.team);
+    if (!team || (row.side !== 1 && row.side !== 2)) return [];
 
-  const players = (lineups ?? []).map((l) => {
-    const member = Array.isArray(l.members) ? l.members[0] : l.members;
-    const openInterval = openIntervals?.find((i) => i.member_id === l.member_id);
-    return {
-      member: member!,
-      team: l.team as "A" | "B",
-      goals: (goals ?? []).filter((g) => g.member_id === l.member_id).length,
-      isPlaying: match.status === "pending" ? true : !!openInterval,
-      openIntervalId: openInterval?.id ?? null,
-    };
+    return [
+      {
+        matchTeamId: row.id,
+        eventTeamId: row.event_team_id,
+        side: row.side,
+        teamCode: team.team_code,
+        displayName: team.display_name,
+      },
+    ];
   });
 
-  const goalIds = (goals ?? []).reduce(
-    (acc, g) => {
-      if (!acc[g.member_id]) acc[g.member_id] = [];
-      acc[g.member_id].push(g.id);
-      return acc;
-    },
-    {} as Record<string, string[]>
+  if (matchTeams.length !== 2) {
+    throw new Error("この試合の対戦チームを2チーム特定できませんでした");
+  }
+
+  const teamSideByMatchTeamId = new Map(
+    matchTeams.map((team) => [team.matchTeamId, team.side] as const)
   );
+  const lineupRows = (lineupData ?? []) as unknown as LineupRow[];
+  const players: MatchPlayer[] = lineupRows.flatMap((lineup) => {
+    const member = normalizeOne(lineup.members);
+    const side = teamSideByMatchTeamId.get(lineup.match_team_id);
+    if (!member || (side !== 1 && side !== 2)) return [];
+
+    return [
+      {
+        member,
+        side,
+        goals: (goals ?? []).filter(
+          (goal) => goal.member_id === lineup.member_id
+        ).length,
+        isPlaying: lineup.is_playing,
+      },
+    ];
+  });
+
+  const goalIds = (goals ?? []).reduce<Record<string, string[]>>(
+    (idsByMember, goal) => {
+      (idsByMember[goal.member_id] ??= []).push(goal.id);
+      return idsByMember;
+    },
+    {}
+  );
+  const playingTeamIds = new Set(
+    matchTeams.map((team) => team.eventTeamId)
+  );
+  const restingTeams = ((eventTeamData ?? []) as EventTeam[])
+    .filter((team) => !playingTeamIds.has(team.id))
+    .map((team) => ({
+      teamCode: team.team_code,
+      displayName: team.display_name,
+    }));
 
   return (
     <MatchClient
@@ -61,6 +145,9 @@ export default async function MatchPage({
       initialPlayers={players}
       initialGoalIds={goalIds}
       eventId={eventId}
+      teams={matchTeams}
+      restingTeams={restingTeams}
+      initialCanManage={canManage}
     />
   );
 }

@@ -54,6 +54,7 @@ export default function MemberList({ members }: { members: Member[] }) {
             <Button
               variant="ghost"
               size="icon"
+              aria-label={`${member.name}を削除`}
               disabled={isPending}
               onClick={() => handleDeleteClick(member)}
               className="text-destructive hover:text-destructive"

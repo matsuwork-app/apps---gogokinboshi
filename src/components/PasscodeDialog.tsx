@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useTransition } from "react";
 
-// パスコードをここで変更できます
-const PASSCODE = "55";
+import { unlockManager } from "@/app/actions/auth";
 
 export default function PasscodeDialog({
   open,
@@ -15,23 +14,34 @@ export default function PasscodeDialog({
   onConfirm: () => void;
 }) {
   const [value, setValue] = useState("");
-  const [error, setError] = useState(false);
+  const [error, setError] = useState("");
+  const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
     if (open) {
       setValue("");
-      setError(false);
+      setError("");
     }
   }, [open]);
 
   function handleGo() {
-    if (value === PASSCODE) {
-      onConfirm();
-      onClose();
-    } else {
-      setError(true);
-      setValue("");
-    }
+    if (isPending) return;
+
+    startTransition(async () => {
+      try {
+        const result = await unlockManager(value);
+        if (result.ok) {
+          onConfirm();
+          onClose();
+          return;
+        }
+
+        setError(result.error);
+        setValue("");
+      } catch {
+        setError("通信に失敗しました。もう一度お試しください");
+      }
+    });
   }
 
   if (!open) return null;
@@ -39,13 +49,22 @@ export default function PasscodeDialog({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div className="relative bg-background rounded-2xl shadow-2xl w-72 p-6 space-y-4">
-        <p className="text-center font-bold text-lg">パスコードを入力</p>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="passcode-dialog-title"
+        className="relative bg-background rounded-2xl shadow-2xl w-72 p-6 space-y-4"
+      >
+        <p id="passcode-dialog-title" className="text-center font-bold text-lg">
+          パスコードを入力
+        </p>
         <input
+          aria-label="管理パスコード"
           type="password"
           inputMode="numeric"
+          autoComplete="current-password"
           value={value}
-          onChange={(e) => { setValue(e.target.value); setError(false); }}
+          onChange={(e) => { setValue(e.target.value); setError(""); }}
           onKeyDown={(e) => e.key === "Enter" && handleGo()}
           placeholder="••••"
           autoFocus
@@ -53,21 +72,25 @@ export default function PasscodeDialog({
         />
         {error && (
           <p className="text-destructive text-sm text-center">
-            パスコードが違います
+            {error}
           </p>
         )}
         <div className="flex gap-2">
           <button
+            type="button"
             onClick={onClose}
+            disabled={isPending}
             className="flex-1 py-2.5 rounded-lg border text-sm font-semibold hover:bg-muted transition-colors"
           >
             キャンセル
           </button>
           <button
+            type="button"
             onClick={handleGo}
-            className="flex-1 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-bold hover:opacity-90 transition-opacity"
+            disabled={isPending}
+            className="flex-1 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-bold hover:opacity-90 transition-opacity disabled:opacity-50"
           >
-            GO
+            {isPending ? "確認中…" : "GO"}
           </button>
         </div>
       </div>

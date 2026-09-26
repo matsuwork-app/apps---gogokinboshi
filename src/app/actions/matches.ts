@@ -1,40 +1,102 @@
 "use server";
 
-import { createClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
+import { requireManagerSession } from "@/lib/auth";
+import { createAdminClient } from "@/lib/supabase/admin";
+import type { Match } from "@/types";
+
+type ActionError = { error: string };
+
 export async function createMatch(
   eventId: string,
-  lineups: { member_id: string; team: "A" | "B" }[]
-) {
-  if (lineups.length < 2) return { error: "最低2名のラインナップが必要です" };
+  firstTeamId: string,
+  secondTeamId: string
+): Promise<ActionError | never> {
+  await requireManagerSession();
+  if (!eventId || !firstTeamId || !secondTeamId) {
+    return { error: "対戦する2チームを選択してください" };
+  }
+  if (firstTeamId === secondTeamId) {
+    return { error: "異なる2チームを選択してください" };
+  }
 
-  const supabase = await createClient();
+  const supabase = createAdminClient();
+  const { data: matchId, error } = await supabase.rpc("create_match_with_teams", {
+    p_event_id: eventId,
+    p_event_team_ids: [firstTeamId, secondTeamId],
+  });
 
-  const { data: existing } = await supabase
-    .from("matches")
-    .select("match_number")
-    .eq("event_id", eventId)
-    .order("match_number", { ascending: false })
-    .limit(1);
-
-  const matchNumber = (existing?.[0]?.match_number ?? 0) + 1;
-
-  const { data: match, error: matchError } = await supabase
-    .from("matches")
-    .insert({ event_id: eventId, match_number: matchNumber })
-    .select()
-    .single();
-
-  if (matchError || !match) return { error: matchError?.message ?? "作成失敗" };
-
-  const { error: lineupError } = await supabase
-    .from("match_lineups")
-    .insert(lineups.map((l) => ({ ...l, match_id: match.id })));
-
-  if (lineupError) return { error: lineupError.message };
+  if (error || !matchId) return { error: error?.message ?? "試合作成に失敗しました" };
 
   revalidatePath(`/events/${eventId}`);
-  redirect(`/events/${eventId}/matches/${match.id}`);
+  redirect(`/events/${eventId}/matches/${matchId}`);
+}
+
+export async function transitionMatch(
+  eventId: string,
+  matchId: string,
+  expectedStatus: Match["status"],
+  nextStatus: Match["status"]
+): Promise<{ data?: Match; error?: string }> {
+  await requireManagerSession();
+  const supabase = createAdminClient();
+  const { data, error } = await supabase.rpc("transition_match", {
+    p_match_id: matchId,
+    p_expected_status: expectedStatus,
+    p_next_status: nextStatus,
+  });
+
+  if (error) return { error: error.message };
+  revalidatePath(`/events/${eventId}`);
+  revalidatePath(`/events/${eventId}/matches/${matchId}`);
+  return { data };
+}
+
+export async function setPlayerPlaying(
+  matchId: string,
+  memberId: string,
+  isPlaying: boolean
+): Promise<ActionError | { error: null }> {
+  await requireManagerSession();
+  const supabase = createAdminClient();
+  const { error } = await supabase.rpc("set_player_playing", {
+    p_match_id: matchId,
+    p_member_id: memberId,
+    p_is_playing: isPlaying,
+  });
+  return { error: error?.message ?? null };
+}
+
+export async function addGoal(
+  matchId: string,
+  memberId: string
+): Promise<{ id?: string; error?: string }> {
+  await requireManagerSession();
+  const supabase = createAdminClient();
+  const { data, error } = await supabase
+    .from("goals")
+    .insert({ match_id: matchId, member_id: memberId })
+    .select("id")
+    .single();
+
+  return error ? { error: error.message } : { id: data.id };
+}
+
+export async function removeGoal(
+  matchId: string,
+  memberId: string,
+  goalId: string
+): Promise<ActionError | { error: null }> {
+  await requireManagerSession();
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("goals")
+    .delete()
+    .eq("id", goalId)
+    .eq("match_id", matchId)
+    .eq("member_id", memberId);
+
+  return { error: error?.message ?? null };
 }
