@@ -15,7 +15,13 @@ const { stdout: generated } = await execFileAsync(
 );
 
 const checkedIn = await readFile(checkedInPath, "utf8");
-const normalize = (value) => value.replaceAll("\r\n", "\n").trimEnd();
+const normalize = (value) =>
+  value
+    .replaceAll("\r\n", "\n")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .trimEnd();
 
 if (normalize(checkedIn) === normalize(generated)) {
   process.stdout.write("Supabase database types are up to date.\n");

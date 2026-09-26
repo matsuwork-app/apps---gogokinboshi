@@ -84,7 +84,7 @@ RPC内で権限、現在状態、所属関係、重複要求を検証し、関�
 - [x] Supabase Dashboardで対象projectの稼働状態、東京リージョン、7テーブル、RLS未設定を確認。
 - [x] 既存データを論理バックアップし、全件をローカルPostgreSQLへ復元してmigration・RPC・RLSを検証。
 - [x] 既存schemaを最初のbaseline migrationとして追加。
-- [ ] DB生成型を `src/types/database.ts` に反映し、CIでドリフトを検知。
+- [x] DB生成型を `src/types/database.ts` に反映し、CIでドリフトを検知。
 
 ### Phase 2: 認証・RLS
 

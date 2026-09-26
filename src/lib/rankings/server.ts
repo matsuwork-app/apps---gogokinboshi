@@ -1,26 +1,12 @@
 import "server-only";
 
 import type { RankingRow } from "../../types";
+import type { Database } from "../../types/database";
 import { isValidDateRange } from "./date-range";
 import { createClient } from "../supabase/server";
 
-type RankingRpcRow = {
-  member_id: string;
-  name: string;
-  total_goals: number | string;
-  participated_events: number | string;
-  total_events: number | string;
-  total_seconds: number | string;
-  rank: number | string;
-};
-
-type RankingRpc = (
-  functionName: "get_public_rankings",
-  args: { p_from_date: string; p_to_date: string }
-) => Promise<{
-  data: RankingRpcRow[] | null;
-  error: { message: string } | null;
-}>;
+type RankingRpcRow =
+  Database["public"]["Functions"]["get_public_rankings"]["Returns"][number];
 
 export class RankingQueryError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -58,8 +44,7 @@ export async function getPublicRankings(from: string, to: string): Promise<Ranki
   }
 
   const supabase = await createClient();
-  const rpc = supabase.rpc as unknown as RankingRpc;
-  const { data, error } = await rpc("get_public_rankings", {
+  const { data, error } = await supabase.rpc("get_public_rankings", {
     p_from_date: from,
     p_to_date: to,
   });
