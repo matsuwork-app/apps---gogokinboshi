@@ -47,6 +47,7 @@ npm run db:verify
 ```
 
 この検証は旧テーブルの全件数維持、A/B backfill、RLS権限、3チームイベント作成、試合状態遷移、匿名書き込み拒否まで確認します。Supabase固有のPostgREST/API Gateway挙動はPreview環境で別途確認します。
+CIでは実データを含まない`test/fixtures/supabase-legacy-backup.json`を明示的に使用します。引数なしのローカル実行だけが、Git管理外の`backups/`にある最新バックアップを使用します。
 
 ```sql
 -- 試合番号の重複（0行であること）
