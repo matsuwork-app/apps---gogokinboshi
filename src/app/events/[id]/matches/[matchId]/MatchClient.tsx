@@ -340,7 +340,9 @@ export default function MatchClient({
         <h1 className="flex-1 text-xl font-bold">
           第{matchState.match_number}試合
         </h1>
-        <Badge variant={badgeVariant}>{badgeLabel}</Badge>
+        <Badge variant={badgeVariant} data-testid="match-status">
+          {badgeLabel}
+        </Badge>
       </div>
 
       <div className="rounded-xl border bg-card p-4 text-center">
@@ -349,7 +351,9 @@ export default function MatchClient({
             <p className="truncate text-sm font-semibold text-blue-600">
               {orderedTeams[0]?.displayName}
             </p>
-            <p className="text-5xl font-bold text-blue-600">{scores[1]}</p>
+            <p className="text-5xl font-bold text-blue-600" data-testid="score-side-1">
+              {scores[1]}
+            </p>
           </div>
           <div className="text-muted-foreground">
             <p className="text-2xl font-light">-</p>
@@ -369,7 +373,9 @@ export default function MatchClient({
             <p className="truncate text-sm font-semibold text-green-600">
               {orderedTeams[1]?.displayName}
             </p>
-            <p className="text-5xl font-bold text-green-600">{scores[2]}</p>
+            <p className="text-5xl font-bold text-green-600" data-testid="score-side-2">
+              {scores[2]}
+            </p>
           </div>
         </div>
         {restingTeams.length > 0 && (

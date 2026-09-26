@@ -11,6 +11,7 @@
     "db:verify": "node scripts/verify-supabase-migrations.mjs",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:lifecycle": "playwright test --config=playwright.lifecycle.config.ts",
     "typecheck": "tsc --noEmit --incremental false"
   },
   "dependencies": {
@@ -36,6 +37,7 @@
     "@types/node": "^24.19.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "supabase": "^2.118.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^5.0.2"

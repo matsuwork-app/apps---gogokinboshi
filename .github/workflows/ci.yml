@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+      - run: npm audit --audit-level=low
+      - run: npm test
+      - run: npm run db:verify
+      - run: npm run typecheck
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Start disposable Supabase stack
+        run: npx supabase start -x studio,imgproxy,realtime,storage-api,edge-runtime,logflare,vector,supavisor,mailpit
+
+      - name: Prepare lifecycle E2E environment
+        run: |
+          npx supabase status -o env > "$RUNNER_TEMP/supabase.env"
+          node scripts/generate-manager-credentials.mjs "$RUNNER_TEMP/manager.json"
+          node scripts/prepare-local-e2e-env.mjs \
+            "$RUNNER_TEMP/supabase.env" \
+            "$RUNNER_TEMP/manager.json" \
+            "$GITHUB_ENV"
+
+      - run: npm run build
+
+      - name: Run full match lifecycle E2E
+        run: npm run test:e2e:lifecycle
+
+      - name: Stop disposable Supabase stack
+        if: always()
+        run: npx supabase stop --no-backup

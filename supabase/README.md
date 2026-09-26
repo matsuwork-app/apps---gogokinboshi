@@ -1,5 +1,33 @@
 # Supabase migration runbook
 
+## 使い捨てDBによる試合ライフサイクルE2E
+
+GitHub ActionsのCIは、Supabase CLIで毎回まっさらなローカルスタックを起動し、migrationと`seed.sql`を適用してから、次の主要フローをPlaywrightで確認します。
+
+- 3チームイベントの作成と均等割り当て
+- 2チームの対戦作成と残り1チームの休憩表示
+- キックオフ、一時停止、再開、得点、ベンチ切替、試合終了
+- 再読込後の状態・得点保持とDBレコードの整合性
+
+ライフサイクルテストはデータを書き換えるため、通常の`npm run test:e2e`から分離しています。専用設定は、Supabase URLが`http://127.0.0.1:54321`であること、明示的な書込許可、シードされたガード値をすべて検証し、条件を満たさなければ開始前に停止します。本番・PreviewのSupabaseへ向けて実行できません。
+
+Dockerが利用できるローカル環境では、CIと同じ流れを次のように再現できます。生成された認証情報ファイルと環境ファイルは一時ディレクトリに置き、Gitへ追加しません。
+
+```sh
+npx supabase start -x studio,imgproxy,realtime,storage-api,edge-runtime,logflare,vector,supavisor,mailpit
+npx supabase status -o env > /tmp/gogokinboshi-supabase.env
+node scripts/generate-manager-credentials.mjs /tmp/gogokinboshi-manager.json
+node scripts/prepare-local-e2e-env.mjs \
+  /tmp/gogokinboshi-supabase.env \
+  /tmp/gogokinboshi-manager.json \
+  /tmp/gogokinboshi-e2e.env
+set -a
+. /tmp/gogokinboshi-e2e.env
+set +a
+npm run test:e2e:lifecycle
+npx supabase stop --no-backup
+```
+
 `migrations/202609260001_multiteam_state_machine_rls.sql` は、既存データを保持したまま次を追加します。
 
 - イベントごとの2〜4チームとイベント共通の所属
