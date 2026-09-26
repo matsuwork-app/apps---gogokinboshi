@@ -9,7 +9,12 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { createClient } from "@/lib/supabase/client";
+import { loadPublicRankings } from "@/app/actions/rankings";
+import {
+  formatJapaneseDate,
+  getDefaultModalPeriod,
+  isValidDateRange,
+} from "@/lib/rankings/date-range";
 import { BarChart3, ArrowRight, Loader2 } from "lucide-react";
 import type { RankingRow } from "@/types";
 
@@ -32,12 +37,8 @@ type Step = "select" | "loading" | "result";
 export default function RankingModal() {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<Step>("select");
-  const [fromDate, setFromDate] = useState(() => {
-    const d = new Date();
-    d.setFullYear(d.getFullYear() - 1);
-    return d.toISOString().slice(0, 10);
-  });
-  const [toDate, setToDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [fromDate, setFromDate] = useState(() => getDefaultModalPeriod().from);
+  const [toDate, setToDate] = useState(() => getDefaultModalPeriod().to);
   const [ranking, setRanking] = useState<RankingRow[]>([]);
   const [periodLabel, setPeriodLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -48,85 +49,28 @@ export default function RankingModal() {
   }
 
   async function handleGo() {
-    if (!fromDate || !toDate || fromDate > toDate) {
+    if (!isValidDateRange(fromDate, toDate)) {
       setError("期間を正しく指定してください");
       return;
     }
     setError(null);
     setStep("loading");
 
-    const supabase = createClient();
+    try {
+      const result = await loadPublicRankings(fromDate, toDate);
+      if (!result.ok) {
+        setError(result.error);
+        setStep("select");
+        return;
+      }
 
-    const [{ data: members }, { data: goalRows }, { data: intervalRows }, { data: eventRows }, { data: participationRows }] =
-      await Promise.all([
-        supabase.from("members").select("id, name").order("created_at"),
-        supabase
-          .from("goals")
-          .select("member_id, matches!inner(started_at)")
-          .gte("matches.started_at", `${fromDate}T00:00:00`)
-          .lte("matches.started_at", `${toDate}T23:59:59`),
-        supabase
-          .from("playing_intervals")
-          .select("member_id, started_at, ended_at, matches!inner(started_at)")
-          .gte("matches.started_at", `${fromDate}T00:00:00`)
-          .lte("matches.started_at", `${toDate}T23:59:59`)
-          .not("ended_at", "is", null),
-        supabase
-          .from("events")
-          .select("id")
-          .gte("event_date", fromDate)
-          .lte("event_date", toDate),
-        supabase
-          .from("event_participants")
-          .select("member_id, events!inner(event_date)")
-          .gte("events.event_date", fromDate)
-          .lte("events.event_date", toDate),
-      ]);
-
-    const totalEvents = eventRows?.length ?? 0;
-
-    const goalMap = new Map<string, number>();
-    (goalRows ?? []).forEach(({ member_id }) => {
-      goalMap.set(member_id, (goalMap.get(member_id) ?? 0) + 1);
-    });
-
-    const secondsMap = new Map<string, number>();
-    (intervalRows ?? []).forEach(({ member_id, started_at, ended_at }) => {
-      if (!ended_at) return;
-      const sec = Math.floor(
-        (new Date(ended_at).getTime() - new Date(started_at).getTime()) / 1000
-      );
-      secondsMap.set(member_id, (secondsMap.get(member_id) ?? 0) + sec);
-    });
-
-    const participationMap = new Map<string, number>();
-    (participationRows ?? []).forEach(({ member_id }) => {
-      participationMap.set(member_id, (participationMap.get(member_id) ?? 0) + 1);
-    });
-
-    const sorted = (members ?? [])
-      .map((m) => ({
-        member_id: m.id,
-        name: m.name,
-        total_goals: goalMap.get(m.id) ?? 0,
-        participated_events: participationMap.get(m.id) ?? 0,
-        total_events: totalEvents,
-        total_seconds: secondsMap.get(m.id) ?? 0,
-        rank: 0,
-      }))
-      .sort((a, b) => b.total_goals - a.total_goals);
-
-    let rank = 1;
-    sorted.forEach((row, i) => {
-      if (i > 0 && row.total_goals < sorted[i - 1].total_goals) rank = i + 1;
-      row.rank = rank;
-    });
-
-    const fmt = (d: string) =>
-      new Date(d).toLocaleDateString("ja-JP", { year: "numeric", month: "long", day: "numeric" });
-    setPeriodLabel(`${fmt(fromDate)} 〜 ${fmt(toDate)}`);
-    setRanking(sorted);
-    setStep("result");
+      setPeriodLabel(`${formatJapaneseDate(fromDate)} 〜 ${formatJapaneseDate(toDate)}`);
+      setRanking(result.ranking);
+      setStep("result");
+    } catch {
+      setError("ランキングの取得に失敗しました。時間をおいてもう一度お試しください。");
+      setStep("select");
+    }
   }
 
   return (

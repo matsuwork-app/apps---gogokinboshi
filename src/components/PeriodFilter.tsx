@@ -3,6 +3,12 @@
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  formatPeriodMonthLabel,
+  getDefaultDashboardPeriod,
+  isValidDateRange,
+  shiftPeriodByMonths,
+} from "@/lib/rankings/date-range";
 
 export default function PeriodFilter({
   from,
@@ -13,27 +19,18 @@ export default function PeriodFilter({
 }) {
   const router = useRouter();
 
-  const fromDate = new Date(from);
-  const toDate = new Date(to);
-  const label = `${fromDate.getFullYear()}年${fromDate.getMonth() + 1}月 〜 ${toDate.getFullYear()}年${toDate.getMonth() + 1}月`;
+  const defaults = getDefaultDashboardPeriod();
+  const period = isValidDateRange(from, to) ? { from, to } : defaults;
+  const label = formatPeriodMonthLabel(period.from, period.to);
 
   function shift(months: number) {
-    const newFrom = new Date(fromDate);
-    newFrom.setMonth(newFrom.getMonth() + months);
-    const newTo = new Date(toDate);
-    newTo.setMonth(newTo.getMonth() + months);
-    router.push(
-      `/?from=${newFrom.toISOString().slice(0, 10)}&to=${newTo.toISOString().slice(0, 10)}`
-    );
+    const shifted = shiftPeriodByMonths(period.from, period.to, months);
+    router.push(`/?from=${shifted.from}&to=${shifted.to}`);
   }
 
   function resetToYear() {
-    const now = new Date();
-    const f = new Date(now.getFullYear() - 1, now.getMonth(), 1)
-      .toISOString()
-      .slice(0, 10);
-    const t = now.toISOString().slice(0, 10);
-    router.push(`/?from=${f}&to=${t}`);
+    const period = getDefaultDashboardPeriod();
+    router.push(`/?from=${period.from}&to=${period.to}`);
   }
 
   return (
