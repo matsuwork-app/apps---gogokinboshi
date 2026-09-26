@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Geist } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import NavBar from "@/components/NavBar";
@@ -22,6 +24,8 @@ export default function RootLayout({
         <NavBar />
         <main className="max-w-2xl mx-auto px-4 py-6">{children}</main>
         <Toaster />
+        <Analytics />
+        <SpeedInsights />
       </body>
     </html>
   );

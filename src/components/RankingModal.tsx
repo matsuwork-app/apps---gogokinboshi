@@ -3,7 +3,10 @@
 import { useState } from "react";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
+  DialogDescription,
+  DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -42,24 +45,32 @@ export default function RankingModal() {
   const [ranking, setRanking] = useState<RankingRow[]>([]);
   const [periodLabel, setPeriodLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [hasDateError, setHasDateError] = useState(false);
 
   function handleOpenChange(v: boolean) {
     setOpen(v);
-    if (!v) setStep("select");
+    if (!v) {
+      setStep("select");
+      setError(null);
+      setHasDateError(false);
+    }
   }
 
   async function handleGo() {
     if (!isValidDateRange(fromDate, toDate)) {
       setError("期間を正しく指定してください");
+      setHasDateError(true);
       return;
     }
     setError(null);
+    setHasDateError(false);
     setStep("loading");
 
     try {
       const result = await loadPublicRankings(fromDate, toDate);
       if (!result.ok) {
         setError(result.error);
+        setHasDateError(false);
         setStep("select");
         return;
       }
@@ -69,6 +80,7 @@ export default function RankingModal() {
       setStep("result");
     } catch {
       setError("ランキングの取得に失敗しました。時間をおいてもう一度お試しください。");
+      setHasDateError(false);
       setStep("select");
     }
   }
@@ -78,7 +90,7 @@ export default function RankingModal() {
       <DialogTrigger
         render={<Button variant="outline" size="sm" className="gap-1.5" />}
       >
-        <BarChart3 size={15} />
+        <BarChart3 size={15} aria-hidden="true" />
         集計
       </DialogTrigger>
 
@@ -86,6 +98,11 @@ export default function RankingModal() {
         className="max-w-sm w-full p-0 overflow-hidden rounded-2xl border-0 shadow-2xl"
         showCloseButton={false}
       >
+        <DialogTitle className="sr-only">得点王を決める</DialogTitle>
+        <DialogDescription className="sr-only">
+          集計期間を指定して得点ランキングを表示します。
+        </DialogDescription>
+
         {/* ---- STEP: 期間選択 ---- */}
         {(step === "select" || step === "loading") && (
           <>
@@ -97,35 +114,53 @@ export default function RankingModal() {
                   </p>
                   <p className="font-bold text-xl mt-0.5">🏆 得点王を決める</p>
                 </div>
-                <button
-                  onClick={() => setOpen(false)}
-                  className="text-white/60 hover:text-white text-xl leading-none mt-0.5 px-1"
+                <DialogClose
+                  aria-label="集計画面を閉じる"
+                  className="text-white/60 hover:text-white text-xl leading-none mt-0.5 px-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
                 >
-                  ✕
-                </button>
+                  <span aria-hidden="true">✕</span>
+                </DialogClose>
               </div>
             </div>
 
             <div className="px-5 py-5 space-y-4">
               <div className="space-y-1.5">
-                <Label className="text-sm font-semibold">開始日</Label>
+                <Label htmlFor="ranking-from-date" className="text-sm font-semibold">開始日</Label>
                 <Input
+                  id="ranking-from-date"
                   type="date"
                   value={fromDate}
-                  onChange={(e) => setFromDate(e.target.value)}
+                  onChange={(e) => {
+                    setFromDate(e.target.value);
+                    setError(null);
+                    setHasDateError(false);
+                  }}
                   disabled={step === "loading"}
+                  aria-invalid={hasDateError}
+                  aria-describedby={hasDateError ? "ranking-period-error" : undefined}
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-sm font-semibold">終了日</Label>
+                <Label htmlFor="ranking-to-date" className="text-sm font-semibold">終了日</Label>
                 <Input
+                  id="ranking-to-date"
                   type="date"
                   value={toDate}
-                  onChange={(e) => setToDate(e.target.value)}
+                  onChange={(e) => {
+                    setToDate(e.target.value);
+                    setError(null);
+                    setHasDateError(false);
+                  }}
                   disabled={step === "loading"}
+                  aria-invalid={hasDateError}
+                  aria-describedby={hasDateError ? "ranking-period-error" : undefined}
                 />
               </div>
-              {error && <p className="text-destructive text-sm">{error}</p>}
+              {error && (
+                <p id="ranking-period-error" role="alert" className="text-destructive text-sm">
+                  {error}
+                </p>
+              )}
             </div>
 
             <div className="px-5 pb-5 flex gap-2">
@@ -143,9 +178,9 @@ export default function RankingModal() {
                 disabled={step === "loading"}
               >
                 {step === "loading" ? (
-                  <><Loader2 size={15} className="animate-spin" /> 集計中...</>
+                  <><Loader2 size={15} className="animate-spin" aria-hidden="true" /> <span role="status">集計中...</span></>
                 ) : (
-                  <>GO <ArrowRight size={15} /></>
+                  <>GO <ArrowRight size={15} aria-hidden="true" /></>
                 )}
               </Button>
             </div>
@@ -163,12 +198,12 @@ export default function RankingModal() {
                   </p>
                   <p className="font-bold text-base leading-snug">{periodLabel}</p>
                 </div>
-                <button
-                  onClick={() => setOpen(false)}
-                  className="text-white/60 hover:text-white text-xl leading-none mt-0.5 px-1"
+                <DialogClose
+                  aria-label="集計画面を閉じる"
+                  className="text-white/60 hover:text-white text-xl leading-none mt-0.5 px-1 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
                 >
-                  ✕
-                </button>
+                  <span aria-hidden="true">✕</span>
+                </DialogClose>
               </div>
               <p className="text-3xl mt-2">🏆 得点王</p>
             </div>

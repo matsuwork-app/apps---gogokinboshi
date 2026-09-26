@@ -28,6 +28,7 @@ export default function NavBar() {
               <Link
                 key={href}
                 href={href}
+                aria-current={pathname === href ? "page" : undefined}
                 className={cn(
                   "flex flex-col items-center gap-0.5 px-3 py-2 rounded-lg text-xs transition-colors whitespace-nowrap",
                   pathname === href
@@ -35,7 +36,7 @@ export default function NavBar() {
                     : "text-muted-foreground hover:text-foreground hover:bg-muted"
                 )}
               >
-                <Icon size={18} />
+                <Icon size={18} aria-hidden="true" />
                 {label}
               </Link>
             ))}

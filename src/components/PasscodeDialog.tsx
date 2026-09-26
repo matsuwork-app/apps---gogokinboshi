@@ -1,8 +1,16 @@
 "use client";
 
-import { useState, useEffect, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 
 import { unlockManager } from "@/app/actions/auth";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 
 export default function PasscodeDialog({
   open,
@@ -16,6 +24,7 @@ export default function PasscodeDialog({
   const [value, setValue] = useState("");
   const [error, setError] = useState("");
   const [isPending, startTransition] = useTransition();
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (open) {
@@ -44,56 +53,62 @@ export default function PasscodeDialog({
     });
   }
 
-  if (!open) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/50" onClick={onClose} />
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="passcode-dialog-title"
-        className="relative bg-background rounded-2xl shadow-2xl w-72 p-6 space-y-4"
+    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
+      <DialogContent
+        className="w-72 rounded-2xl p-6 shadow-2xl"
+        showCloseButton={false}
+        initialFocus={inputRef}
       >
-        <p id="passcode-dialog-title" className="text-center font-bold text-lg">
+        <DialogTitle className="text-center text-lg font-bold">
           パスコードを入力
-        </p>
-        <input
-          aria-label="管理パスコード"
-          type="password"
-          inputMode="numeric"
-          autoComplete="current-password"
-          value={value}
-          onChange={(e) => { setValue(e.target.value); setError(""); }}
-          onKeyDown={(e) => e.key === "Enter" && handleGo()}
-          placeholder="••••"
-          autoFocus
-          className="w-full text-center text-2xl tracking-widest border rounded-lg px-4 py-3 outline-none focus:ring-2 focus:ring-primary"
-        />
-        {error && (
-          <p className="text-destructive text-sm text-center">
-            {error}
-          </p>
-        )}
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isPending}
-            className="flex-1 py-2.5 rounded-lg border text-sm font-semibold hover:bg-muted transition-colors"
-          >
-            キャンセル
-          </button>
-          <button
-            type="button"
-            onClick={handleGo}
-            disabled={isPending}
-            className="flex-1 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-bold hover:opacity-90 transition-opacity disabled:opacity-50"
-          >
-            {isPending ? "確認中…" : "GO"}
-          </button>
-        </div>
-      </div>
-    </div>
+        </DialogTitle>
+        <DialogDescription className="sr-only">
+          管理機能を利用するためのパスコードを入力してください。
+        </DialogDescription>
+        <form
+          className="space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            handleGo();
+          }}
+        >
+          <label htmlFor="manager-passcode" className="sr-only">管理パスコード</label>
+          <input
+            ref={inputRef}
+            id="manager-passcode"
+            type="password"
+            inputMode="numeric"
+            autoComplete="current-password"
+            value={value}
+            onChange={(e) => { setValue(e.target.value); setError(""); }}
+            placeholder="••••"
+            aria-invalid={Boolean(error)}
+            aria-describedby={error ? "manager-passcode-error" : undefined}
+            className="w-full rounded-lg border px-4 py-3 text-center text-2xl tracking-widest outline-none focus:ring-2 focus:ring-primary"
+          />
+          {error && (
+            <p id="manager-passcode-error" role="alert" className="text-center text-sm text-destructive">
+              {error}
+            </p>
+          )}
+          <div className="flex gap-2">
+            <DialogClose
+              render={<Button type="button" variant="outline" className="flex-1" />}
+              disabled={isPending}
+            >
+              キャンセル
+            </DialogClose>
+            <Button
+              type="submit"
+              disabled={isPending}
+              className="flex-1 font-bold"
+            >
+              {isPending ? "確認中…" : "GO"}
+            </Button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
