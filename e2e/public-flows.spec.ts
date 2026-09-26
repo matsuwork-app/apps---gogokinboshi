@@ -30,6 +30,40 @@ test("公開ランキングとイベント履歴を閲覧できる", async ({ pa
   expect(pageErrors).toEqual([]);
 });
 
+test("ランキングの期間操作と集計ダイアログをキーボードで操作できる", async ({ page }) => {
+  await page.goto("/");
+
+  await expect(page.getByRole("button", { name: "前の月へ" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "次の月へ" })).toBeVisible();
+
+  const trigger = page.getByRole("button", { name: "集計" });
+  await trigger.focus();
+  await trigger.press("Enter");
+
+  const dialog = page.getByRole("dialog", { name: "得点王を決める" });
+  await expect(dialog).toBeVisible();
+  const fromDate = dialog.getByLabel("開始日");
+  const toDate = dialog.getByLabel("終了日");
+  await expect(fromDate).toBeVisible();
+  await expect(toDate).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "集計画面を閉じる" })).toBeVisible();
+
+  await fromDate.fill("2030-01-02");
+  await toDate.fill("2030-01-01");
+  await dialog.getByRole("button", { name: "GO" }).click();
+  await expect(dialog.getByRole("alert")).toHaveText("期間を正しく指定してください");
+  await expect(fromDate).toHaveAttribute("aria-invalid", "true");
+  await expect(toDate).toHaveAttribute("aria-invalid", "true");
+
+  await fromDate.fill("2030-01-01");
+  await expect(fromDate).toHaveAttribute("aria-invalid", "false");
+  await expect(toDate).toHaveAttribute("aria-invalid", "false");
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+});
+
 test("イベント作成画面で3〜4チームを均等編成できる", async ({ page }) => {
   const pageErrors = watchPageErrors(page);
 
@@ -86,13 +120,27 @@ test("1試合につき異なる2チームを選択する", async ({ page }) => {
 test("誤った管理パスコードを拒否する", async ({ page }) => {
   await page.goto("/members");
   await page.getByPlaceholder("メンバー名を入力").fill("   ");
-  await page.getByRole("button", { name: "追加" }).click();
+  const trigger = page.getByRole("button", { name: "追加" });
+  await trigger.click();
 
   const dialog = page.getByRole("dialog", { name: "パスコードを入力" });
   await expect(dialog).toBeVisible();
-  await dialog.getByRole("textbox", { name: "管理パスコード" }).fill("00000000");
-  await dialog.getByRole("button", { name: "GO" }).click();
-  await expect(dialog).toContainText("パスコードが違います");
+  const passcode = dialog.getByRole("textbox", { name: "管理パスコード" });
+  await expect(passcode).toBeFocused();
+
+  await page.keyboard.press("Shift+Tab");
+  await expect(dialog.getByRole("button", { name: "GO" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(passcode).toBeFocused();
+
+  await passcode.fill("00000000");
+  await passcode.press("Enter");
+  await expect(dialog.getByRole("alert")).toBeVisible();
+  await expect(passcode).toHaveAttribute("aria-invalid", "true");
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
 });
 
 test("正しい管理パスコードで認証し、無効入力は書き込まない", async ({ page }) => {

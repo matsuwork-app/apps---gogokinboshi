@@ -35,12 +35,22 @@ export default function PeriodFilter({
 
   return (
     <div className="flex items-center gap-2 text-sm">
-      <Button variant="outline" size="icon" onClick={() => shift(-1)}>
-        <ChevronLeft size={16} />
+      <Button
+        variant="outline"
+        size="icon"
+        onClick={() => shift(-1)}
+        aria-label="前の月へ"
+      >
+        <ChevronLeft size={16} aria-hidden="true" />
       </Button>
       <span className="flex-1 text-center font-medium">{label}</span>
-      <Button variant="outline" size="icon" onClick={() => shift(1)}>
-        <ChevronRight size={16} />
+      <Button
+        variant="outline"
+        size="icon"
+        onClick={() => shift(1)}
+        aria-label="次の月へ"
+      >
+        <ChevronRight size={16} aria-hidden="true" />
       </Button>
       <Button variant="ghost" size="sm" onClick={resetToYear} className="text-xs">
         直近1年

@@ -107,7 +107,7 @@ RPC内で権限、現在状態、所属関係、重複要求を検証し、関�
 - [x] Playwright主要フローを追加（公開閲覧、3〜4チーム編成、2チーム対戦選択、管理認証、誤パスコード拒否、使い捨てDBでの試合開始〜終了）。
 - [x] ランキングRPCとserver-only DALを導入。
 - [x] JST日付生成をtimezone-safeな実装へ変更。
-- [ ] dialog、キーボード操作、aria-labelを改善。
+- [x] dialog、キーボード操作、aria-labelを改善。
 - [x] Supabase runbookへmigration、バックアップ、権限確認、互換ロールバック手順を記載。
 
 ### Phase 5: Preview・本番移行
@@ -115,7 +115,7 @@ RPC内で権限、現在状態、所属関係、重複要求を検証し、関�
 - [ ] Preview用SupabaseとVercel環境変数を設定。
 - [x] migration → smoke test → production promote → rollbackの手順を確認。
 - [x] 既存データを保持したまま本番migrationを適用。
-- [ ] Runtime logs、エラー通知、Web Analytics/Speed Insightsの必要範囲を設定。
+- [x] Runtime logs、エラー通知、Web Analytics/Speed Insightsの必要範囲を設定。
 
 ## Verification
 
@@ -132,3 +132,4 @@ RPC内で権限、現在状態、所属関係、重複要求を検証し、関�
 - 2026-09-26: Vercel Previewで公開閲覧・複数チームUI・管理認証を非破壊確認後、同じ成果物をProductionへ昇格。
 - 2026-09-26: CIの使い捨てSupabaseとPlaywrightで3チームイベント作成から試合終了・再読込までを自動検証。
 - 2026-09-26: 公開ランキングをJST日付境界・最大3660日で集計するread-only RPCへ移し、ブラウザへの全明細配信を廃止。
+- 2026-09-26: ダイアログのフォーカス管理とARIAを改善し、Web Analytics/Speed Insightsを導入。Hobby範囲では標準Runtime Logsとデプロイ失敗通知を利用。

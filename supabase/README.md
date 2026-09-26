@@ -1,5 +1,24 @@
 # Supabase migration runbook
 
+## Vercel Preview用Supabase
+
+VercelのPreviewデプロイは、本番データを変更しない専用Supabaseプロジェクトへ接続します。現在の専用プロジェクトrefは`uvmehitbxaaxhexqngtx`（`apps-gogokinboshi-e2e`）です。URLとAPIキーはリポジトリへ保存せず、Vercelで`Preview`だけにスコープして設定します。
+
+切替は次の順序を守ります。空のPreview DBへ全migrationを適用し、後述の権限検査と公開read-only RPCを確認してから、Vercelの`NEXT_PUBLIC_SUPABASE_URL`、`NEXT_PUBLIC_SUPABASE_ANON_KEY`、`SUPABASE_SERVICE_ROLE_KEY`のPreview値を更新します。`MANAGER_PASSWORD_HASH`と`MANAGER_SESSION_SECRET`もPreviewスコープに存在することを確認します。本番スコープの値は変更しません。
+
+CLIを使う場合は、作業コピーのリンク先を明示的にPreviewへ切り替え、保存されたproject refが一致することを確認してからpushします。不一致ならその場で停止し、`db push`を実行しません。
+
+```sh
+npx supabase link --project-ref uvmehitbxaaxhexqngtx
+test "$(cat supabase/.temp/project-ref)" = "uvmehitbxaaxhexqngtx" || exit 1
+npx supabase db lint --linked
+npx supabase db push --dry-run --linked
+npx supabase db push --linked
+npx supabase db lint --linked
+```
+
+環境変数を更新しただけでは既存Previewデプロイに反映されないため、新しいPreviewデプロイを作成して、公開画面の読込と管理画面からのイベント作成をPlaywrightで確認します。migration未適用、mutation RPCの`service_role`権限不足、またはPreview URLが本番project refを指している場合は切り替えません。
+
 ## 使い捨てDBによる試合ライフサイクルE2E
 
 GitHub ActionsのCIは、Supabase CLIで毎回まっさらなローカルスタックを起動し、migrationと`seed.sql`を適用してから、次の主要フローをPlaywrightで確認します。
