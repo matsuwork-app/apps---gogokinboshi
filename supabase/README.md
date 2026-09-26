@@ -49,6 +49,14 @@ npm run db:verify
 この検証は旧テーブルの全件数維持、A/B backfill、RLS権限、3チームイベント作成、試合状態遷移、匿名書き込み拒否まで確認します。Supabase固有のPostgREST/API Gateway挙動はPreview環境で別途確認します。
 CIでは実データを含まない`test/fixtures/supabase-legacy-backup.json`を明示的に使用します。引数なしのローカル実行だけが、Git管理外の`backups/`にある最新バックアップを使用します。
 
+`202609260002_public_ranking_rpc.sql`は、ランキングをDB側で集計する公開read-only RPCを追加します。JSTの日付境界を開始以上・終了日翌日未満で扱い、集計期間は最大3660日です。`matches.started_at`の部分indexも同時に追加します。アプリは集計済みの1メンバー1行だけを受け取り、得点・出場区間の全明細をブラウザへ配信しません。
+
+ローカルSupabase起動後は、生成型のドリフトも確認できます。
+
+```sh
+npm run db:types:check
+```
+
 ```sql
 -- 試合番号の重複（0行であること）
 select event_id, match_number, count(*)

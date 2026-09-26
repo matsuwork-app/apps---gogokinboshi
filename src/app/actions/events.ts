@@ -34,7 +34,7 @@ function parseTeamAssignments(value: FormDataEntryValue | null): TeamAssignment[
 export async function createEvent(formData: FormData) {
   await requireManagerSession();
   const eventDate = formData.get("event_date")?.toString();
-  const notes = formData.get("notes")?.toString() || null;
+  const notes = formData.get("notes")?.toString() || "";
   const teamCount = Number(formData.get("team_count"));
   const assignments = parseTeamAssignments(formData.get("team_assignments"));
 

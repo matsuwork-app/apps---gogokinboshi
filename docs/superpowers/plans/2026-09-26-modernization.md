@@ -84,7 +84,7 @@ RPC内で権限、現在状態、所属関係、重複要求を検証し、関�
 - [x] Supabase Dashboardで対象projectの稼働状態、東京リージョン、7テーブル、RLS未設定を確認。
 - [x] 既存データを論理バックアップし、全件をローカルPostgreSQLへ復元してmigration・RPC・RLSを検証。
 - [x] 既存schemaを最初のbaseline migrationとして追加。
-- [ ] DB生成型を `src/types/database.ts` に反映し、CIでドリフトを検知。
+- [x] DB生成型を `src/types/database.ts` に反映し、CIでドリフトを検知。
 
 ### Phase 2: 認証・RLS
 
@@ -104,9 +104,9 @@ RPC内で権限、現在状態、所属関係、重複要求を検証し、関�
 ### Phase 4: 品質・性能
 
 - [x] Vitestで認証暗号、チームローテーション、タイマーの単体テストを追加。
-- [ ] Playwright主要フローを追加（公開閲覧、3〜4チーム編成、2チーム対戦選択、管理認証、誤パスコード拒否は完了。試合記録のDB分離E2Eは未完了）。
-- [ ] ランキングview/RPCとserver-only DALを導入。
-- [ ] JST日付生成をtimezone-safeな実装へ変更。
+- [x] Playwright主要フローを追加（公開閲覧、3〜4チーム編成、2チーム対戦選択、管理認証、誤パスコード拒否、使い捨てDBでの試合開始〜終了）。
+- [x] ランキングRPCとserver-only DALを導入。
+- [x] JST日付生成をtimezone-safeな実装へ変更。
 - [ ] dialog、キーボード操作、aria-labelを改善。
 - [x] Supabase runbookへmigration、バックアップ、権限確認、互換ロールバック手順を記載。
 
@@ -130,3 +130,5 @@ RPC内で権限、現在状態、所属関係、重複要求を検証し、関�
 - 2026-09-26: Supabase Free Planのため論理バックアップを取得し、実データをPGliteへ復元してmigration/RPC/RLS/rollbackを検証したうえで現行projectへ適用。
 - 2026-09-26: 新しい共有パスコードを発行し、Vercel Production / Previewへservice roleを含むserver-only秘密環境変数を登録。
 - 2026-09-26: Vercel Previewで公開閲覧・複数チームUI・管理認証を非破壊確認後、同じ成果物をProductionへ昇格。
+- 2026-09-26: CIの使い捨てSupabaseとPlaywrightで3チームイベント作成から試合終了・再読込までを自動検証。
+- 2026-09-26: 公開ランキングをJST日付境界・最大3660日で集計するread-only RPCへ移し、ブラウザへの全明細配信を廃止。

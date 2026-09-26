@@ -4,7 +4,10 @@ export type Member = Database["public"]["Tables"]["members"]["Row"];
 export type Event = Database["public"]["Tables"]["events"]["Row"];
 export type EventParticipant =
   Database["public"]["Tables"]["event_participants"]["Row"];
-export type EventTeam = Database["public"]["Tables"]["event_teams"]["Row"];
+type GeneratedEventTeam = Database["public"]["Tables"]["event_teams"]["Row"];
+export type EventTeam = Omit<GeneratedEventTeam, "team_code"> & {
+  team_code: "A" | "B" | "C" | "D";
+};
 export type EventTeamMember =
   Database["public"]["Tables"]["event_team_members"]["Row"];
 export type Match = Database["public"]["Tables"]["matches"]["Row"];

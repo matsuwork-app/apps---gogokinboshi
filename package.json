@@ -8,6 +8,7 @@
     "start": "next start",
     "backup:supabase": "node scripts/export-supabase-backup.mjs",
     "auth:generate": "node scripts/generate-manager-credentials.mjs",
+    "db:types:check": "node scripts/check-database-types.mjs",
     "db:verify": "node scripts/verify-supabase-migrations.mjs",
     "test": "vitest run",
     "test:e2e": "playwright test",

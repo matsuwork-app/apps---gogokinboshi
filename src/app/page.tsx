@@ -1,8 +1,8 @@
-import { createClient } from "@/lib/supabase/server";
 import RankingTable from "@/components/RankingTable";
 import PeriodFilter from "@/components/PeriodFilter";
 import RankingModal from "@/components/RankingModal";
-import type { RankingRow } from "@/types";
+import { getDefaultDashboardPeriod } from "@/lib/rankings/date-range";
+import { getPublicRankings } from "@/lib/rankings/server";
 
 function formatSeconds(s: number) {
   const h = Math.floor(s / 3600);
@@ -14,26 +14,36 @@ function formatSeconds(s: number) {
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ from?: string; to?: string }>;
+  searchParams: Promise<{
+    from?: string | string[];
+    to?: string | string[];
+  }>;
 }) {
   const params = await searchParams;
-  const supabase = await createClient();
+  const defaults = getDefaultDashboardPeriod();
+  const fromDate = typeof params.from === "string" ? params.from : defaults.from;
+  const toDate = typeof params.to === "string" ? params.to : defaults.to;
 
-  const now = new Date();
-  const defaultFrom = new Date(now.getFullYear() - 1, now.getMonth(), 1)
-    .toISOString()
-    .slice(0, 10);
-  const defaultTo = now.toISOString().slice(0, 10);
+  let ranking;
+  try {
+    ranking = await getPublicRankings(fromDate, toDate);
+  } catch (error) {
+    console.error("Failed to render public rankings", error);
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold">得点ランキング</h1>
+          <RankingModal />
+        </div>
+        <PeriodFilter from={fromDate} to={toDate} />
+        <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+          ランキングの取得に失敗しました。期間を確認するか、時間をおいてもう一度お試しください。
+        </div>
+      </div>
+    );
+  }
 
-  const fromDate = params.from ?? defaultFrom;
-  const toDate = params.to ?? defaultTo;
-
-  const { data: members } = await supabase
-    .from("members")
-    .select("id, name")
-    .order("created_at");
-
-  if (!members || members.length === 0) {
+  if (ranking.length === 0) {
     return (
       <div className="space-y-4">
         <h1 className="text-2xl font-bold">得点ランキング</h1>
@@ -45,76 +55,6 @@ export default async function DashboardPage({
       </div>
     );
   }
-
-  const [
-    { data: goalRows },
-    { data: intervalRows },
-    { data: eventRows },
-    { data: participationRows },
-  ] = await Promise.all([
-    supabase
-      .from("goals")
-      .select("member_id, matches!inner(started_at)")
-      .gte("matches.started_at", `${fromDate}T00:00:00`)
-      .lte("matches.started_at", `${toDate}T23:59:59`),
-    supabase
-      .from("playing_intervals")
-      .select("member_id, started_at, ended_at, matches!inner(started_at)")
-      .gte("matches.started_at", `${fromDate}T00:00:00`)
-      .lte("matches.started_at", `${toDate}T23:59:59`)
-      .not("ended_at", "is", null),
-    supabase
-      .from("events")
-      .select("id")
-      .gte("event_date", fromDate)
-      .lte("event_date", toDate),
-    supabase
-      .from("event_participants")
-      .select("member_id, events!inner(event_date)")
-      .gte("events.event_date", fromDate)
-      .lte("events.event_date", toDate),
-  ]);
-
-  const totalEvents = eventRows?.length ?? 0;
-
-  const goalMap = new Map<string, number>();
-  (goalRows ?? []).forEach(({ member_id }) => {
-    goalMap.set(member_id, (goalMap.get(member_id) ?? 0) + 1);
-  });
-
-  const secondsMap = new Map<string, number>();
-  (intervalRows ?? []).forEach(({ member_id, started_at, ended_at }) => {
-    if (!ended_at) return;
-    const sec = Math.floor(
-      (new Date(ended_at).getTime() - new Date(started_at).getTime()) / 1000
-    );
-    secondsMap.set(member_id, (secondsMap.get(member_id) ?? 0) + sec);
-  });
-
-  const participationMap = new Map<string, number>();
-  (participationRows ?? []).forEach(({ member_id }) => {
-    participationMap.set(member_id, (participationMap.get(member_id) ?? 0) + 1);
-  });
-
-  const sorted = [...members]
-    .map((m) => ({
-      member_id: m.id,
-      name: m.name,
-      total_goals: goalMap.get(m.id) ?? 0,
-      participated_events: participationMap.get(m.id) ?? 0,
-      total_events: totalEvents,
-      total_seconds: secondsMap.get(m.id) ?? 0,
-      rank: 0,
-    }))
-    .sort((a, b) => b.total_goals - a.total_goals);
-
-  let rank = 1;
-  sorted.forEach((row, i) => {
-    if (i > 0 && row.total_goals < sorted[i - 1].total_goals) rank = i + 1;
-    row.rank = rank;
-  });
-
-  const ranking: RankingRow[] = sorted;
 
   return (
     <div className="space-y-4">

@@ -1,3 +1,4 @@
+import { toJapanDateString } from "@/lib/dates/japan";
 import { createClient } from "@/lib/supabase/server";
 import EventNewForm from "./EventNewForm";
 
@@ -19,7 +20,7 @@ export default async function EventNewPage() {
     );
   }
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = toJapanDateString();
 
   return (
     <div className="space-y-6">

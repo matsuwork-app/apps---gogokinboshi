@@ -14,6 +14,10 @@ const MIGRATION_PATH = path.join(
   ROOT,
   "supabase/migrations/202609260001_multiteam_state_machine_rls.sql"
 );
+const RANKING_MIGRATION_PATH = path.join(
+  ROOT,
+  "supabase/migrations/202609260002_public_ranking_rpc.sql"
+);
 const ROLLBACK_PATH = path.join(
   ROOT,
   "supabase/rollback/20260926_restore_legacy_writes.sql"
@@ -104,6 +108,7 @@ try {
   }
 
   await db.exec(await readFile(MIGRATION_PATH, "utf8"));
+  await db.exec(await readFile(RANKING_MIGRATION_PATH, "utf8"));
 
   for (const [table, expectedCount] of Object.entries(backup.row_counts)) {
     const actualCount = Number(await scalar(db, `select count(*) from public.${table}`));
@@ -215,6 +220,80 @@ try {
     1
   );
 
+  await setRole(db, "service_role", async () => {
+    const eventId = await scalar(
+      db,
+      "select public.create_event_with_teams($1::date, $2::text, $3::jsonb)",
+      ["2099-04-01", "ranking JST boundary verification", JSON.stringify(teams)]
+    );
+    const eventTeamRows = await db.query(
+      "select id from public.event_teams where event_id = $1 order by sort_order",
+      [eventId]
+    );
+    const startedAtValues = [
+      "2099-03-31T14:59:59Z",
+      "2099-03-31T15:00:00Z",
+      "2099-04-01T14:59:59Z",
+      "2099-04-01T15:00:00Z",
+    ];
+
+    for (const [index, startedAt] of startedAtValues.entries()) {
+      const matchId = await scalar(
+        db,
+        "select public.create_match_with_teams($1::uuid, $2::uuid[], null)",
+        [eventId, eventTeamRows.rows.slice(0, 2).map((team) => team.id)]
+      );
+      await db.query(
+        `update public.matches
+         set status = 'finished', started_at = $2::timestamptz,
+             ended_at = $2::timestamptz + interval '30 seconds', elapsed_seconds = 30
+         where id = $1`,
+        [matchId, startedAt]
+      );
+      await db.query(
+        "insert into public.goals (match_id, member_id, scored_at) values ($1, $2, $3::timestamptz)",
+        [matchId, memberIds[0], startedAt]
+      );
+      if (index === 1 || index === 2) {
+        const duration = index === 1 ? 10 : 20;
+        await db.query(
+          `insert into public.playing_intervals (match_id, member_id, started_at, ended_at)
+           values ($1, $2, $3::timestamptz, $3::timestamptz + ($4 * interval '1 second'))`,
+          [matchId, memberIds[0], startedAt, duration]
+        );
+      }
+    }
+  });
+
+  await setRole(db, "anon", async () => {
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('anon', 'public.get_public_rankings(date,date)', 'execute')"
+      ),
+      true
+    );
+    const rankingRows = await db.query(
+      "select * from public.get_public_rankings('2099-04-01', '2099-04-01')"
+    );
+    const target = rankingRows.rows.find((row) => row.member_id === memberIds[0]);
+    assert(target, "ranking must include every member");
+    assert.equal(Number(target.total_goals), 2, "JST day boundaries must be inclusive by date");
+    assert.equal(Number(target.total_seconds), 30);
+    assert.equal(Number(target.participated_events), 1);
+    assert.equal(Number(target.total_events), 1);
+    assert.equal(Number(target.rank), 1);
+    assert.equal(rankingRows.rows.length, backup.data.members.length);
+    await assert.rejects(
+      db.query("select * from public.get_public_rankings('2099-04-02', '2099-04-01')"),
+      /from date must not be after to date/i
+    );
+    await assert.rejects(
+      db.query("select * from public.get_public_rankings('2000-01-01', '2011-01-01')"),
+      /ranking period must not exceed 3660 days/i
+    );
+  });
+
   await setRole(db, "anon", async () => {
     assert.equal(Number(await scalar(db, "select count(*) from public.events")) > 0, true);
     await assert.rejects(
@@ -272,6 +351,7 @@ try {
         "RLS privileges",
         "3-team event",
         "match lifecycle",
+        "public ranking RPC with JST boundaries",
         "anon write rejection",
         "legacy-write rollback",
       ],
