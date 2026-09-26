@@ -10,6 +10,7 @@
     "auth:generate": "node scripts/generate-manager-credentials.mjs",
     "db:verify": "node scripts/verify-supabase-migrations.mjs",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit --incremental false"
   },
   "dependencies": {
@@ -30,6 +31,7 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^24.19.0",
     "@types/react": "^19",
