@@ -70,9 +70,9 @@ export default async function TeamEditPage({
         .eq("matches.event_id", eventId),
       supabase
         .from("goals")
-        .select("member_id,event_turns!inner(event_id)")
+        .select("member_id,turn_team_members!inner(event_id)")
         .not("event_turn_id", "is", null)
-        .eq("event_turns.event_id", eventId),
+        .eq("turn_team_members.event_id", eventId),
     ]);
 
   const loadError = [
