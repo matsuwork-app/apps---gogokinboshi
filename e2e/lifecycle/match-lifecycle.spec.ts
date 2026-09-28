@@ -7,6 +7,7 @@ const EVENT_MARKER = "E2E-LIFECYCLE";
 let admin: SupabaseClient;
 let eventId: string | null = null;
 let matchId: string | null = null;
+let nextMatchId: string | null = null;
 
 async function countOpenIntervals(id: string) {
   const { count, error } = await admin
@@ -162,4 +163,82 @@ test("3チームイベントから試合終了まで状態と記録を永続化�
     .eq("match_id", matchId!);
   expect(intervalCountError).toBeNull();
   expect(intervalCount).toBeGreaterThan(2);
+
+  const { data: firstLineupBeforeReassignment, error: firstLineupBeforeError } =
+    await admin
+      .from("match_lineups")
+      .select("member_id,match_teams!inner(event_team_id)")
+      .eq("match_id", matchId!)
+      .order("member_id");
+  expect(firstLineupBeforeError).toBeNull();
+
+  await page.goto(`/events/${eventId}`);
+  await expect(page.getByLabel("E2E-A 本日 1点")).toBeVisible();
+  await page.getByRole("link", { name: "編成を変更" }).click();
+  await expect(page.getByRole("heading", { name: "チーム編成を変更" })).toBeVisible();
+  await expect(page.getByText("変更は次に作成する試合から反映されます。")).toBeVisible();
+
+  await page.getByLabel("E2E-Aの所属チーム").selectOption({ label: "C: チームC" });
+  await page.getByLabel("E2E-Cの所属チーム").selectOption({ label: "A: チームA" });
+  await page.getByRole("button", { name: "編成を保存" }).click();
+  await page.waitForURL(new RegExp(`/events/${eventId}$`));
+
+  const { data: currentMembership, error: currentMembershipError } = await admin
+    .from("event_team_members")
+    .select("member_id,event_teams!inner(team_code)")
+    .eq("event_id", eventId!);
+  expect(currentMembershipError).toBeNull();
+  const memberNameById = new Map(
+    MEMBER_NAMES.map((name, index) => [
+      `10000000-0000-4000-8000-00000000000${index + 1}`,
+      name,
+    ]),
+  );
+  const teamByMemberName = new Map(
+    (currentMembership ?? []).map((membership) => {
+      const relation = Array.isArray(membership.event_teams)
+        ? membership.event_teams[0]
+        : membership.event_teams;
+      return [memberNameById.get(membership.member_id), relation?.team_code];
+    }),
+  );
+  expect(teamByMemberName.get("E2E-A")).toBe("C");
+  expect(teamByMemberName.get("E2E-B")).toBe("B");
+  expect(teamByMemberName.get("E2E-C")).toBe("A");
+
+  const { data: firstLineupAfterReassignment, error: firstLineupAfterError } =
+    await admin
+      .from("match_lineups")
+      .select("member_id,match_teams!inner(event_team_id)")
+      .eq("match_id", matchId!)
+      .order("member_id");
+  expect(firstLineupAfterError).toBeNull();
+  expect(firstLineupAfterReassignment).toEqual(firstLineupBeforeReassignment);
+
+  await page.getByRole("link", { name: "試合を追加" }).click();
+  await expect(page.getByLabel("E2E-A 本日 1点")).toBeVisible();
+  await expect(page.getByLabel("E2E-B 本日 0点")).toBeVisible();
+  await page.getByRole("button", { name: "この対戦で試合を開始する" }).click();
+  await page.waitForURL(/\/matches\/[0-9a-f-]+$/);
+  nextMatchId = page.url().match(/\/matches\/([0-9a-f-]+)$/)?.[1] ?? null;
+  expect(nextMatchId).toBeTruthy();
+
+  await expect(page.getByLabel("E2E-A 本日 1点")).toBeVisible();
+  await expect(page.getByLabel("E2E-B 本日 0点")).toBeVisible();
+
+  const { data: nextLineup, error: nextLineupError } = await admin
+    .from("match_lineups")
+    .select("member_id")
+    .eq("match_id", nextMatchId!);
+  expect(nextLineupError).toBeNull();
+  expect(nextLineup?.map(({ member_id }) => memberNameById.get(member_id)).sort()).toEqual([
+    "E2E-A",
+    "E2E-C",
+  ]);
+
+  await page.goto(`/events/${eventId}/matches/${matchId}`);
+  for (const memberName of MEMBER_NAMES) {
+    await expect(page.getByText(memberName, { exact: true })).toHaveCount(1);
+  }
+  await expect(page.getByLabel("E2E-A 本日 1点")).toHaveCount(1);
 });

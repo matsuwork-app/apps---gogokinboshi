@@ -18,6 +18,10 @@ const RANKING_MIGRATION_PATH = path.join(
   ROOT,
   "supabase/migrations/202609260002_public_ranking_rpc.sql"
 );
+const REASSIGNMENT_MIGRATION_PATH = path.join(
+  ROOT,
+  "supabase/migrations/202609280001_reassign_event_team_members.sql"
+);
 const ROLLBACK_PATH = path.join(
   ROOT,
   "supabase/rollback/20260926_restore_legacy_writes.sql"
@@ -109,6 +113,7 @@ try {
 
   await db.exec(await readFile(MIGRATION_PATH, "utf8"));
   await db.exec(await readFile(RANKING_MIGRATION_PATH, "utf8"));
+  await db.exec(await readFile(REASSIGNMENT_MIGRATION_PATH, "utf8"));
 
   for (const [table, expectedCount] of Object.entries(backup.row_counts)) {
     const actualCount = Number(await scalar(db, `select count(*) from public.${table}`));
@@ -219,6 +224,137 @@ try {
     Number(await scalar(db, "select count(*) from public.goals where match_id = $1", [lifecycle.matchId])),
     1
   );
+
+  assert.equal(
+    await scalar(
+      db,
+      "select has_function_privilege('anon', 'public.reassign_event_team_members(uuid,jsonb)', 'execute')"
+    ),
+    false
+  );
+  assert.equal(
+    await scalar(
+      db,
+      "select has_function_privilege('authenticated', 'public.reassign_event_team_members(uuid,jsonb)', 'execute')"
+    ),
+    false
+  );
+  assert.equal(
+    await scalar(
+      db,
+      "select has_function_privilege('service_role', 'public.reassign_event_team_members(uuid,jsonb)', 'execute')"
+    ),
+    true
+  );
+
+  await setRole(db, "service_role", async () => {
+    const eventTeamRows = await db.query(
+      "select id, team_code from public.event_teams where event_id = $1 order by sort_order",
+      [lifecycle.eventId]
+    );
+    const [teamA, teamB, teamC] = eventTeamRows.rows;
+    const reassigned = [
+      { member_id: memberIds[4], event_team_id: teamA.id },
+      { member_id: memberIds[1], event_team_id: teamA.id },
+      { member_id: memberIds[2], event_team_id: teamB.id },
+      { member_id: memberIds[3], event_team_id: teamB.id },
+      { member_id: memberIds[0], event_team_id: teamC.id },
+      { member_id: memberIds[5], event_team_id: teamC.id },
+    ];
+    const originalLineup = await db.query(
+      `select ml.member_id, et.team_code
+       from public.match_lineups ml
+       join public.match_teams mt on mt.id = ml.match_team_id
+       join public.event_teams et on et.id = mt.event_team_id
+       where ml.match_id = $1
+       order by ml.member_id`,
+      [lifecycle.matchId]
+    );
+
+    for (const invalidAssignments of [
+      reassigned.slice(0, -1),
+      [...reassigned.slice(0, -1), reassigned[0]],
+      reassigned.map((assignment) =>
+        assignment.event_team_id === teamC.id
+          ? { ...assignment, event_team_id: teamA.id }
+          : assignment
+      ),
+    ]) {
+      await assert.rejects(
+        db.query(
+          "select public.reassign_event_team_members($1::uuid, $2::jsonb)",
+          [lifecycle.eventId, JSON.stringify(invalidAssignments)]
+        ),
+        /every event participant exactly once|every event team must have at least one member/i
+      );
+    }
+
+    await db.query(
+      "select public.reassign_event_team_members($1::uuid, $2::jsonb)",
+      [lifecycle.eventId, JSON.stringify(reassigned)]
+    );
+
+    const currentMembership = await db.query(
+      `select etm.member_id, et.team_code
+       from public.event_team_members etm
+       join public.event_teams et on et.id = etm.event_team_id
+       where etm.event_id = $1
+       order by etm.member_id`,
+      [lifecycle.eventId]
+    );
+    assert.deepEqual(
+      currentMembership.rows,
+      reassigned
+        .map((assignment) => ({
+          member_id: assignment.member_id,
+          team_code: eventTeamRows.rows.find((team) => team.id === assignment.event_team_id).team_code,
+        }))
+        .sort((left, right) => left.member_id.localeCompare(right.member_id))
+    );
+
+    const preservedLineup = await db.query(
+      `select ml.member_id, et.team_code
+       from public.match_lineups ml
+       join public.match_teams mt on mt.id = ml.match_team_id
+       join public.event_teams et on et.id = mt.event_team_id
+       where ml.match_id = $1
+       order by ml.member_id`,
+      [lifecycle.matchId]
+    );
+    assert.deepEqual(
+      preservedLineup.rows,
+      originalLineup.rows,
+      "reassignment must not modify a finished match lineup"
+    );
+
+    const nextMatchId = await scalar(
+      db,
+      "select public.create_match_with_teams($1::uuid, $2::uuid[], null)",
+      [lifecycle.eventId, [teamA.id, teamC.id]]
+    );
+    const nextLineup = await db.query(
+      `select ml.member_id, mt.side
+       from public.match_lineups ml
+       join public.match_teams mt on mt.id = ml.match_team_id
+       where ml.match_id = $1
+       order by mt.side, ml.member_id`,
+      [nextMatchId]
+    );
+    assert.deepEqual(nextLineup.rows, [
+      { member_id: memberIds[1], side: 1 },
+      { member_id: memberIds[4], side: 1 },
+      { member_id: memberIds[0], side: 2 },
+      { member_id: memberIds[5], side: 2 },
+    ]);
+
+    await assert.rejects(
+      db.query(
+        "select public.reassign_event_team_members($1::uuid, $2::jsonb)",
+        [lifecycle.eventId, JSON.stringify(reassigned)]
+      ),
+      /unfinished match/i
+    );
+  });
 
   await setRole(db, "service_role", async () => {
     const eventId = await scalar(
@@ -351,6 +487,7 @@ try {
         "RLS privileges",
         "3-team event",
         "match lifecycle",
+        "atomic event-team reassignment and lineup snapshots",
         "public ranking RPC with JST boundaries",
         "anon write rejection",
         "legacy-write rollback",

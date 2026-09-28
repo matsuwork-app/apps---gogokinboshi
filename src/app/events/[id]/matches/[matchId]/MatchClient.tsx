@@ -25,13 +25,33 @@ import { Button } from "@/components/ui/button";
 import { calculateElapsedSeconds } from "@/lib/matches/timer";
 import { cn } from "@/lib/utils";
 import type { Match, Member } from "@/types";
+import type { NonLineupTeam } from "./nonLineup";
+
+export type { NonLineupTeam } from "./nonLineup";
 
 export type MatchPlayer = {
   member: Member;
   side: 1 | 2;
   goals: number;
+  dailyGoals: number;
   isPlaying: boolean;
 };
+
+export function adjustPlayerGoalCounts(
+  players: MatchPlayer[],
+  memberId: string,
+  delta: 1 | -1
+) {
+  return players.map((player) =>
+    player.member.id === memberId
+      ? {
+          ...player,
+          goals: Math.max(0, player.goals + delta),
+          dailyGoals: Math.max(0, player.dailyGoals + delta),
+        }
+      : player
+  );
+}
 
 export type MatchTeamDisplay = {
   matchTeamId: string;
@@ -41,15 +61,13 @@ export type MatchTeamDisplay = {
   displayName: string;
 };
 
-type RestingTeam = Pick<MatchTeamDisplay, "teamCode" | "displayName">;
-
 type Props = {
   match: Match;
   initialPlayers: MatchPlayer[];
   initialGoalIds: Record<string, string[]>;
   eventId: string;
   teams: MatchTeamDisplay[];
-  restingTeams: RestingTeam[];
+  nonLineupTeams: NonLineupTeam[];
   initialCanManage: boolean;
 };
 
@@ -69,7 +87,7 @@ export default function MatchClient({
   initialGoalIds,
   eventId,
   teams,
-  restingTeams,
+  nonLineupTeams,
   initialCanManage,
 }: Props) {
   const [players, setPlayers] = useState(initialPlayers);
@@ -216,13 +234,7 @@ export default function MatchClient({
 
       const optimisticId = `optimistic-${crypto.randomUUID()}`;
       setPendingGoalIds((current) => new Set(current).add(memberId));
-      setPlayers((current) =>
-        current.map((player) =>
-          player.member.id === memberId
-            ? { ...player, goals: player.goals + 1 }
-            : player
-        )
-      );
+      setPlayers((current) => adjustPlayerGoalCounts(current, memberId, 1));
       setGoalIds((current) => ({
         ...current,
         [memberId]: [...(current[memberId] ?? []), optimisticId],
@@ -241,11 +253,7 @@ export default function MatchClient({
         }));
       } catch (error) {
         setPlayers((current) =>
-          current.map((player) =>
-            player.member.id === memberId
-              ? { ...player, goals: Math.max(0, player.goals - 1) }
-              : player
-          )
+          adjustPlayerGoalCounts(current, memberId, -1)
         );
         setGoalIds((current) => ({
           ...current,
@@ -274,13 +282,7 @@ export default function MatchClient({
       if (!goalId) return;
 
       setPendingGoalIds((current) => new Set(current).add(memberId));
-      setPlayers((current) =>
-        current.map((player) =>
-          player.member.id === memberId
-            ? { ...player, goals: Math.max(0, player.goals - 1) }
-            : player
-        )
-      );
+      setPlayers((current) => adjustPlayerGoalCounts(current, memberId, -1));
       setGoalIds((current) => ({
         ...current,
         [memberId]: (current[memberId] ?? []).slice(0, -1),
@@ -290,13 +292,7 @@ export default function MatchClient({
         const result = await removeGoal(matchState.id, memberId, goalId);
         if (result.error) throw new Error(result.error);
       } catch (error) {
-        setPlayers((current) =>
-          current.map((player) =>
-            player.member.id === memberId
-              ? { ...player, goals: player.goals + 1 }
-              : player
-          )
-        );
+        setPlayers((current) => adjustPlayerGoalCounts(current, memberId, 1));
         setGoalIds((current) => ({
           ...current,
           [memberId]: [...(current[memberId] ?? []), goalId],
@@ -378,10 +374,41 @@ export default function MatchClient({
             </p>
           </div>
         </div>
-        {restingTeams.length > 0 && (
-          <p className="mt-3 border-t pt-3 text-xs text-muted-foreground">
-            休憩: {restingTeams.map((team) => team.displayName).join("・")}
-          </p>
+        {nonLineupTeams.length > 0 && (
+          <div className="mt-3 space-y-2 border-t pt-3 text-left">
+            <p className="text-xs font-semibold text-muted-foreground">
+              この試合に出ていない参加者
+            </p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {nonLineupTeams.map((team) => (
+                <section key={team.teamCode} className="rounded-lg bg-muted/40 p-2">
+                  <h2 className="text-xs font-semibold">
+                    現在の所属: {team.teamCode} {team.displayName}
+                  </h2>
+                  <div className="mt-1 space-y-1">
+                    {team.members.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">メンバーがいません</p>
+                    ) : (
+                      team.members.map((member) => (
+                        <p
+                          key={member.id}
+                          className="flex min-w-0 items-baseline justify-between gap-2 text-xs"
+                        >
+                          <span className="truncate">{member.name}</span>
+                          <span
+                            className="shrink-0 text-muted-foreground tabular-nums"
+                            aria-label={`${member.name} 本日 ${member.dailyGoals}点`}
+                          >
+                            本日 {member.dailyGoals}点
+                          </span>
+                        </p>
+                      ))
+                    )}
+                  </div>
+                </section>
+              ))}
+            </div>
+          </div>
         )}
       </div>
 
@@ -544,13 +571,21 @@ function PlayerCard({
         </button>
       )}
 
-      <span
-        className={cn(
-          "flex-1 text-base font-semibold",
-          !player.isPlaying && "text-muted-foreground"
-        )}
-      >
-        {player.member.name}
+      <span className="min-w-0 flex-1">
+        <span
+          className={cn(
+            "block truncate text-base font-semibold",
+            !player.isPlaying && "text-muted-foreground"
+          )}
+        >
+          {player.member.name}
+        </span>
+        <span
+          className="block text-xs font-normal text-muted-foreground tabular-nums"
+          aria-label={`${player.member.name} 本日 ${player.dailyGoals}点`}
+        >
+          本日 {player.dailyGoals}点
+        </span>
       </span>
 
       <div className="flex items-center gap-2">

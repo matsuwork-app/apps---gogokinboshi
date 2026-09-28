@@ -46,8 +46,12 @@ export default async function MatchNewPage({
     .single();
   if (!event) notFound();
 
-  const [{ data: teamData }, { data: teamMemberData }, { data: matchData }] =
-    await Promise.all([
+  const [
+    { data: teamData, error: teamError },
+    { data: teamMemberData, error: teamMemberError },
+    { data: matchData, error: matchError },
+    { data: eventGoalData, error: eventGoalError },
+  ] = await Promise.all([
       supabase
         .from("event_teams")
         .select("id,event_id,team_code,display_name,sort_order")
@@ -62,7 +66,17 @@ export default async function MatchNewPage({
         .select("match_teams(event_team_id,side)")
         .eq("event_id", eventId)
         .order("match_number", { ascending: true }),
+      supabase
+        .from("goals")
+        .select("member_id,matches!inner(event_id)")
+        .eq("matches.event_id", eventId),
     ]);
+
+  const loadError =
+    teamError ?? teamMemberError ?? matchError ?? eventGoalError;
+  if (loadError) {
+    throw new Error(`次の試合の準備に失敗しました: ${loadError.message}`);
+  }
 
   const teamRows = (teamData ?? []) as unknown as EventTeamRow[];
   const teamMemberRows = (teamMemberData ?? []) as unknown as EventTeamMemberRow[];
@@ -70,12 +84,24 @@ export default async function MatchNewPage({
 
   if (teamRows.length < 2 || teamRows.length > 4) notFound();
 
+  const dailyGoalsByMember = (eventGoalData ?? []).reduce<Record<string, number>>(
+    (totals, goal) => {
+      totals[goal.member_id] = (totals[goal.member_id] ?? 0) + 1;
+      return totals;
+    },
+    {}
+  );
+
   const teams: EventTeamForMatch[] = teamRows.map((team) => ({
     ...team,
     members: teamMemberRows
       .filter((row) => row.event_team_id === team.id)
       .map((row) => normalizeMember(row.members))
-      .filter((member): member is Member => member !== null),
+      .filter((member): member is Member => member !== null)
+      .map((member) => ({
+        ...member,
+        dailyGoals: dailyGoalsByMember[member.id] ?? 0,
+      })),
   }));
 
   const teamIdSet = new Set(teams.map((team) => team.id));
