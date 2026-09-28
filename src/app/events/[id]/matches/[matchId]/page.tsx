@@ -8,6 +8,10 @@ import MatchClient, {
   type MatchPlayer,
   type MatchTeamDisplay,
 } from "./MatchClient";
+import {
+  buildNonLineupTeams,
+  type EventTeamMemberRow,
+} from "./nonLineup";
 
 type LineupRow = {
   member_id: string;
@@ -47,8 +51,10 @@ export default async function MatchPage({
   const [
     { data: lineupData, error: lineupError },
     { data: goals, error: goalsError },
+    { data: eventGoals, error: eventGoalsError },
     { data: matchTeamData, error: matchTeamError },
     { data: eventTeamData, error: eventTeamError },
+    { data: eventTeamMemberData, error: eventTeamMemberError },
     canManage,
   ] = await Promise.all([
     supabase
@@ -61,6 +67,10 @@ export default async function MatchPage({
       .eq("match_id", matchId)
       .order("scored_at"),
     supabase
+      .from("goals")
+      .select("member_id,matches!inner(event_id)")
+      .eq("matches.event_id", eventId),
+    supabase
       .from("match_teams")
       .select(
         "id,event_team_id,side,team:event_teams!match_teams_event_team_fkey(id,event_id,team_code,display_name,sort_order,created_at)"
@@ -72,11 +82,20 @@ export default async function MatchPage({
       .select("id,event_id,team_code,display_name,sort_order,created_at")
       .eq("event_id", eventId)
       .order("sort_order", { ascending: true }),
+    supabase
+      .from("event_team_members")
+      .select("event_team_id,member_id,members(*)")
+      .eq("event_id", eventId),
     hasManagerSession(),
   ]);
 
   const loadError =
-    lineupError ?? goalsError ?? matchTeamError ?? eventTeamError;
+    lineupError ??
+    goalsError ??
+    eventGoalsError ??
+    matchTeamError ??
+    eventTeamError ??
+    eventTeamMemberError;
   if (loadError) {
     throw new Error(`試合データの読み込みに失敗しました: ${loadError.message}`);
   }
@@ -105,6 +124,13 @@ export default async function MatchPage({
     matchTeams.map((team) => [team.matchTeamId, team.side] as const)
   );
   const lineupRows = (lineupData ?? []) as unknown as LineupRow[];
+  const dailyGoalsByMember = (eventGoals ?? []).reduce<Record<string, number>>(
+    (totals, goal) => {
+      totals[goal.member_id] = (totals[goal.member_id] ?? 0) + 1;
+      return totals;
+    },
+    {}
+  );
   const players: MatchPlayer[] = lineupRows.flatMap((lineup) => {
     const member = normalizeOne(lineup.members);
     const side = teamSideByMatchTeamId.get(lineup.match_team_id);
@@ -117,6 +143,7 @@ export default async function MatchPage({
         goals: (goals ?? []).filter(
           (goal) => goal.member_id === lineup.member_id
         ).length,
+        dailyGoals: dailyGoalsByMember[lineup.member_id] ?? 0,
         isPlaying: lineup.is_playing,
       },
     ];
@@ -129,15 +156,14 @@ export default async function MatchPage({
     },
     {}
   );
-  const playingTeamIds = new Set(
-    matchTeams.map((team) => team.eventTeamId)
+  const lineupMemberIds = new Set(lineupRows.map((lineup) => lineup.member_id));
+  const eventTeamMemberRows = (eventTeamMemberData ?? []) as unknown as EventTeamMemberRow[];
+  const nonLineupTeams = buildNonLineupTeams(
+    (eventTeamData ?? []) as EventTeam[],
+    eventTeamMemberRows,
+    lineupMemberIds,
+    dailyGoalsByMember
   );
-  const restingTeams = ((eventTeamData ?? []) as EventTeam[])
-    .filter((team) => !playingTeamIds.has(team.id))
-    .map((team) => ({
-      teamCode: team.team_code,
-      displayName: team.display_name,
-    }));
 
   return (
     <MatchClient
@@ -146,7 +172,7 @@ export default async function MatchPage({
       initialGoalIds={goalIds}
       eventId={eventId}
       teams={matchTeams}
-      restingTeams={restingTeams}
+      nonLineupTeams={nonLineupTeams}
       initialCanManage={canManage}
     />
   );

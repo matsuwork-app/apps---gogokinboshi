@@ -11,6 +11,11 @@ type TeamAssignment = {
   position: number;
 };
 
+export type EventTeamReassignment = {
+  member_id: string;
+  event_team_id: string;
+};
+
 function parseTeamAssignments(value: FormDataEntryValue | null): TeamAssignment[] | null {
   if (typeof value !== "string") return null;
   try {
@@ -81,5 +86,72 @@ export async function deleteEvent(id: string) {
   const { error } = await supabase.from("events").delete().eq("id", id);
   if (error) return { error: error.message };
   revalidatePath("/events");
+  return { error: null };
+}
+
+function parseEventTeamReassignments(
+  value: unknown,
+): EventTeamReassignment[] | null {
+  if (!Array.isArray(value)) return null;
+
+  const assignments: EventTeamReassignment[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object") return null;
+    const memberId = Reflect.get(item, "member_id");
+    const eventTeamId = Reflect.get(item, "event_team_id");
+    if (
+      typeof memberId !== "string" ||
+      memberId.trim().length === 0 ||
+      typeof eventTeamId !== "string" ||
+      eventTeamId.trim().length === 0
+    ) {
+      return null;
+    }
+    assignments.push({ member_id: memberId, event_team_id: eventTeamId });
+  }
+
+  return assignments;
+}
+
+export async function reassignEventTeamMembers(
+  eventId: string,
+  input: unknown,
+) {
+  await requireManagerSession();
+
+  if (typeof eventId !== "string" || eventId.trim().length === 0) {
+    return { error: "イベントが指定されていません" };
+  }
+
+  const assignments = parseEventTeamReassignments(input);
+  if (!assignments || assignments.length < 2) {
+    return { error: "すべての参加者をチームへ割り当ててください" };
+  }
+
+  if (
+    new Set(assignments.map(({ member_id }) => member_id)).size !==
+    assignments.length
+  ) {
+    return { error: "同じ参加者を複数チームへ割り当てることはできません" };
+  }
+
+  const teamCount = new Set(
+    assignments.map(({ event_team_id }) => event_team_id),
+  ).size;
+  if (teamCount < 2 || teamCount > 4) {
+    return { error: "2〜4チームすべてに1名以上割り当ててください" };
+  }
+
+  const supabase = createAdminClient();
+  const { error } = await supabase.rpc("reassign_event_team_members", {
+    p_event_id: eventId,
+    p_assignments: assignments,
+  });
+
+  if (error) return { error: error.message };
+
+  revalidatePath(`/events/${eventId}`);
+  revalidatePath(`/events/${eventId}/teams/edit`);
+  revalidatePath(`/events/${eventId}/matches/new`);
   return { error: null };
 }

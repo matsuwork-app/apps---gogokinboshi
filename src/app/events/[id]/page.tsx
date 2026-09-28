@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { CheckCircle, Clock, Pause, Play, Plus } from "lucide-react";
+import { CheckCircle, Clock, Pause, Play, Plus, UsersRound } from "lucide-react";
 
 import { buttonVariants } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +20,16 @@ type Team = {
   team_code: string;
   display_name: string;
   sort_order: number;
+};
+
+type TeamMember = {
+  id: string;
+  name: string;
+};
+
+type TeamMemberRow = {
+  event_team_id: string;
+  members: TeamMember | TeamMember[] | null;
 };
 
 type MatchTeam = { id: string; event_team_id: string; side: number };
@@ -45,6 +55,10 @@ function normalizeMatchTeams(value: MatchRow["match_teams"]) {
   );
 }
 
+function normalizeMember(value: TeamMemberRow["members"]): TeamMember | null {
+  return Array.isArray(value) ? (value[0] ?? null) : value;
+}
+
 export default async function EventDetailPage({
   params,
 }: {
@@ -60,7 +74,7 @@ export default async function EventDetailPage({
     .single();
   if (!event) notFound();
 
-  const [matchesResult, teamsResult, participantsResult, goalsResult] =
+  const [matchesResult, teamsResult, participantsResult, goalsResult, teamMembersResult] =
     await Promise.all([
       supabase
         .from("matches")
@@ -80,6 +94,10 @@ export default async function EventDetailPage({
         .from("goals")
         .select("member_id,match_id,matches!inner(event_id)")
         .eq("matches.event_id", id),
+      supabase
+        .from("event_team_members")
+        .select("event_team_id,members(id,name)")
+        .eq("event_id", id),
     ]);
 
   const matches = (matchesResult.data ?? []) as unknown as MatchRow[];
@@ -89,6 +107,7 @@ export default async function EventDetailPage({
     participantsResult.data?.flatMap((participant) =>
       participant.members ? [participant.members] : []
     ) ?? [];
+  const teamMemberRows = (teamMembersResult.data ?? []) as unknown as TeamMemberRow[];
 
   const matchIds = matches.map((match) => match.id);
   const { data: matchLineups } = matchIds.length
@@ -101,6 +120,15 @@ export default async function EventDetailPage({
   const goalSummary = new Map<string, number>();
   goals.forEach(({ member_id }) => {
     goalSummary.set(member_id, (goalSummary.get(member_id) ?? 0) + 1);
+  });
+
+  const membersByTeam = new Map<string, TeamMember[]>();
+  teamMemberRows.forEach((row) => {
+    const member = normalizeMember(row.members);
+    if (!member) return;
+    const current = membersByTeam.get(row.event_team_id) ?? [];
+    current.push(member);
+    membersByTeam.set(row.event_team_id, current);
   });
 
   const lineupByMatch = new Map<string, Map<string, "A" | "B">>();
@@ -221,14 +249,46 @@ export default async function EventDetailPage({
 
       {teams.length > 0 && (
         <section className="space-y-3">
-          <h2 className="text-lg font-semibold">チーム</h2>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold">現在のチーム編成</h2>
+              <p className="text-xs text-muted-foreground">
+                編成変更は次に作成する試合から反映されます
+              </p>
+            </div>
+            <Link
+              href={`/events/${id}/teams/edit`}
+              className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+            >
+              <UsersRound size={14} className="mr-1" />
+              編成を変更
+            </Link>
+          </div>
           <div className="grid grid-cols-2 gap-2">
-            {teams.map((team) => (
-              <div key={team.id} className="flex items-center gap-2 rounded-lg border bg-card p-3">
-                <Badge className={TEAM_BADGE[team.team_code] ?? ""}>{team.team_code}</Badge>
-                <span className="truncate text-sm font-medium">{team.display_name}</span>
-              </div>
-            ))}
+            {teams.map((team) => {
+              const teamMembers = membersByTeam.get(team.id) ?? [];
+              return (
+                <div key={team.id} className="min-w-0 rounded-lg border bg-card p-3">
+                  <div className="flex items-center gap-2">
+                    <Badge className={TEAM_BADGE[team.team_code] ?? ""}>{team.team_code}</Badge>
+                    <span className="truncate text-sm font-medium">{team.display_name}</span>
+                  </div>
+                  <ul className="mt-3 space-y-2">
+                    {teamMembers.map((member) => (
+                      <li key={member.id} className="min-w-0">
+                        <p className="truncate text-sm font-medium">{member.name}</p>
+                        <p
+                          className="text-xs tabular-nums text-muted-foreground"
+                          aria-label={`${member.name} 本日 ${goalSummary.get(member.id) ?? 0}点`}
+                        >
+                          本日 {goalSummary.get(member.id) ?? 0}点
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
           </div>
         </section>
       )}

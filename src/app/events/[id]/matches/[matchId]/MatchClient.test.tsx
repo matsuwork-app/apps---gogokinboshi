@@ -9,7 +9,11 @@ vi.mock("@/app/actions/matches", () => ({
 }));
 vi.mock("@/app/actions/auth", () => ({ unlockManager: vi.fn() }));
 
-import MatchClient, { type MatchPlayer } from "./MatchClient";
+import MatchClient, {
+  adjustPlayerGoalCounts,
+  type MatchPlayer,
+} from "./MatchClient";
+import { buildNonLineupTeams } from "./nonLineup";
 import type { Match } from "@/types";
 
 const finishedMatch: Match = {
@@ -33,6 +37,7 @@ const players: MatchPlayer[] = [
     },
     side: 1,
     goals: 1,
+    dailyGoals: 4,
     isPlaying: true,
   },
 ];
@@ -55,6 +60,52 @@ const teams = [
 ];
 
 describe("終了済み試合の管理操作", () => {
+  it("休憩チームの現在の所属選手と当日累計を表示する", () => {
+    const markup = renderToStaticMarkup(
+      <MatchClient
+        match={finishedMatch}
+        initialPlayers={players}
+        initialGoalIds={{ "member-1": ["goal-1"] }}
+        eventId="event-1"
+        teams={teams}
+        nonLineupTeams={[
+          {
+            teamCode: "A",
+            displayName: "チームA",
+            members: [
+              {
+                id: "member-2",
+                name: "休憩選手",
+                dailyGoals: 3,
+              },
+            ],
+          },
+        ]}
+        initialCanManage={false}
+      />,
+    );
+
+    expect(markup).toContain("休憩選手");
+    expect(markup).toContain('aria-label="休憩選手 本日 3点"');
+  });
+
+  it("選手名の横に当日の累計得点を表示する", () => {
+    const markup = renderToStaticMarkup(
+      <MatchClient
+        match={finishedMatch}
+        initialPlayers={players}
+        initialGoalIds={{ "member-1": ["goal-1"] }}
+        eventId="event-1"
+        teams={teams}
+        nonLineupTeams={[]}
+        initialCanManage={false}
+      />,
+    );
+
+    expect(markup).toContain("本日 4点");
+    expect(markup).toContain('aria-label="テスト選手 本日 4点"');
+  });
+
   it("管理者には得点修正ボタンだけを表示する", () => {
     const markup = renderToStaticMarkup(
       <MatchClient
@@ -63,7 +114,7 @@ describe("終了済み試合の管理操作", () => {
         initialGoalIds={{ "member-1": ["goal-1"] }}
         eventId="event-1"
         teams={teams}
-        restingTeams={[]}
+        nonLineupTeams={[]}
         initialCanManage
       />,
     );
@@ -82,12 +133,91 @@ describe("終了済み試合の管理操作", () => {
         initialGoalIds={{ "member-1": ["goal-1"] }}
         eventId="event-1"
         teams={teams}
-        restingTeams={[]}
+        nonLineupTeams={[]}
         initialCanManage={false}
       />,
     );
 
     expect(markup).toContain("得点を修正");
     expect(markup).not.toContain("テスト選手に1点追加");
+  });
+});
+
+describe("得点の楽観更新", () => {
+  it("試合得点と当日累計を同時に増減し、ロールバックで元に戻す", () => {
+    const added = adjustPlayerGoalCounts(players, "member-1", 1);
+
+    expect(added[0]).toMatchObject({ goals: 2, dailyGoals: 5 });
+    expect(adjustPlayerGoalCounts(added, "member-1", -1)[0]).toMatchObject({
+      goals: 1,
+      dailyGoals: 4,
+    });
+  });
+});
+
+describe("試合ラインナップ外の参加者", () => {
+  it("ラインナップを除外し、対戦チームへの現在所属者も表示対象にする", () => {
+    const eventTeams = [
+      {
+        id: "event-team-1",
+        event_id: "event-1",
+        team_code: "A" as const,
+        display_name: "チームA",
+        sort_order: 1,
+        created_at: "2026-09-28T00:00:00.000Z",
+      },
+      {
+        id: "event-team-3",
+        event_id: "event-1",
+        team_code: "C" as const,
+        display_name: "チームC",
+        sort_order: 3,
+        created_at: "2026-09-28T00:00:00.000Z",
+      },
+    ];
+    const member = (id: string, name: string) => ({
+      id,
+      name,
+      created_at: "2026-09-28T00:00:00.000Z",
+    });
+    const memberships = [
+      {
+        event_team_id: "event-team-1",
+        member_id: "member-1",
+        members: member("member-1", "ラインナップ選手"),
+      },
+      {
+        event_team_id: "event-team-1",
+        member_id: "member-2",
+        members: member("member-2", "対戦チーム現所属選手"),
+      },
+      {
+        event_team_id: "event-team-3",
+        member_id: "member-3",
+        members: member("member-3", "別チーム選手"),
+      },
+    ];
+
+    const result = buildNonLineupTeams(
+      eventTeams,
+      memberships,
+      new Set(["member-1"]),
+      { "member-2": 2, "member-3": 1 }
+    );
+
+    expect(result).toEqual([
+      {
+        teamCode: "A",
+        displayName: "チームA",
+        members: [
+          { id: "member-2", name: "対戦チーム現所属選手", dailyGoals: 2 },
+        ],
+      },
+      {
+        teamCode: "C",
+        displayName: "チームC",
+        members: [{ id: "member-3", name: "別チーム選手", dailyGoals: 1 }],
+      },
+    ]);
   });
 });

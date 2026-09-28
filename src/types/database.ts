@@ -279,6 +279,9 @@ isOneToOne: false
               "member_id": string,"name": string,"participated_events": number,"rank": number,"total_events": number,"total_goals": number,"total_seconds": number
             }[]
                            },
+"reassign_event_team_members":
+{ Args: { "p_assignments": Json,"p_event_id": string }; Returns: undefined
+                           },
 "set_player_playing":
 { Args: { "p_is_playing": boolean,"p_match_id": string,"p_member_id": string }; Returns: undefined
                            },

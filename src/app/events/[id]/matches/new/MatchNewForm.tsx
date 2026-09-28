@@ -19,7 +19,7 @@ export type EventTeamForMatch = {
   team_code: string;
   display_name: string;
   sort_order: number;
-  members: Member[];
+  members: (Member & { dailyGoals: number })[];
 };
 
 const TEAM_STYLES: Record<
@@ -170,7 +170,17 @@ export default function MatchNewForm({
                   {team.members.length === 0 ? (
                     <p className="text-muted-foreground">メンバーがいません</p>
                   ) : (
-                    team.members.map((member) => <p key={member.id} className="truncate">{member.name}</p>)
+                    team.members.map((member) => (
+                      <p key={member.id} className="flex min-w-0 items-baseline justify-between gap-2">
+                        <span className="truncate">{member.name}</span>
+                        <span
+                          className="shrink-0 text-xs text-muted-foreground tabular-nums"
+                          aria-label={`${member.name} 本日 ${member.dailyGoals}点`}
+                        >
+                          本日 {member.dailyGoals}点
+                        </span>
+                      </p>
+                    ))
                   )}
                 </div>
               </section>
@@ -181,11 +191,26 @@ export default function MatchNewForm({
       {restingTeams.length > 0 && (
         <section className="space-y-2 rounded-lg border border-dashed bg-muted/30 p-4">
           <h2 className="text-sm font-semibold text-muted-foreground">休憩チーム</h2>
-          <div className="flex min-w-0 flex-wrap gap-2">
+          <div className="grid min-w-0 gap-3 sm:grid-cols-2">
             {restingTeams.map((team) => (
-              <Badge key={team.id} variant="outline" className="max-w-full">
-                <span className="truncate">{team.team_code}: {team.display_name}</span>
-              </Badge>
+              <div key={team.id} className="min-w-0 rounded-lg border bg-background p-3">
+                <Badge variant="outline" className="max-w-full">
+                  <span className="truncate">{team.team_code}: {team.display_name}</span>
+                </Badge>
+                <div className="mt-2 space-y-1 text-sm">
+                  {team.members.map((member) => (
+                    <p key={member.id} className="flex min-w-0 items-baseline justify-between gap-2">
+                      <span className="truncate">{member.name}</span>
+                      <span
+                        className="shrink-0 text-xs text-muted-foreground tabular-nums"
+                        aria-label={`${member.name} 本日 ${member.dailyGoals}点`}
+                      >
+                        本日 {member.dailyGoals}点
+                      </span>
+                    </p>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         </section>
