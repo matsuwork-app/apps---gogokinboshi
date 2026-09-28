@@ -22,6 +22,9 @@ describe("RankingTable", () => {
 
     expect(markup).toContain("青木");
     expect(markup).toContain("50%");
+    expect(markup).toContain("総得点");
+    expect(markup).toContain("参加補正");
+    expect(markup).toContain('aria-selected="true"');
     expect(markup).not.toContain("出場時間");
   });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Dialog,
   DialogClose,
@@ -12,12 +12,17 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import RankingModeTabs from "@/components/RankingModeTabs";
 import { loadPublicRankings } from "@/app/actions/rankings";
 import {
   formatJapaneseDate,
   getDefaultModalPeriod,
   isValidDateRange,
 } from "@/lib/rankings/date-range";
+import {
+  buildRankingRows,
+  type RankingMode,
+} from "@/lib/rankings/participation-ranking";
 import { BarChart3, ArrowRight, Loader2 } from "lucide-react";
 import type { RankingRow } from "@/types";
 
@@ -35,9 +40,14 @@ export default function RankingModal() {
   const [fromDate, setFromDate] = useState(() => getDefaultModalPeriod().from);
   const [toDate, setToDate] = useState(() => getDefaultModalPeriod().to);
   const [ranking, setRanking] = useState<RankingRow[]>([]);
+  const [rankingMode, setRankingMode] = useState<RankingMode>("goals");
   const [periodLabel, setPeriodLabel] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [hasDateError, setHasDateError] = useState(false);
+  const displayedRanking = useMemo(
+    () => buildRankingRows(ranking, rankingMode),
+    [ranking, rankingMode],
+  );
 
   function handleOpenChange(v: boolean) {
     setOpen(v);
@@ -45,6 +55,7 @@ export default function RankingModal() {
       setStep("select");
       setError(null);
       setHasDateError(false);
+      setRankingMode("goals");
     }
   }
 
@@ -197,14 +208,31 @@ export default function RankingModal() {
                   <span aria-hidden="true">✕</span>
                 </DialogClose>
               </div>
-              <p className="text-3xl mt-2">🏆 得点王</p>
+              <p className="text-3xl mt-2">
+                {rankingMode === "goals" ? "🏆 得点王" : "🏆 参加補正"}
+              </p>
+            </div>
+
+            <div className="bg-background px-4 pt-4">
+              <RankingModeTabs
+                mode={rankingMode}
+                onChange={setRankingMode}
+                compact
+              />
+              {rankingMode === "participation" && (
+                <p className="text-muted-foreground text-[11px] text-center mt-2">
+                  補正得点 ＝ 総得点 × 参加率
+                </p>
+              )}
             </div>
 
             {/* 表彰台 */}
             <div className="bg-gradient-to-b from-slate-800 to-slate-900 px-4 pt-4 pb-6">
               <div className="flex items-end justify-center gap-2">
                 {PODIUM.map((cfg) => {
-                  const player = ranking.find((r) => r.rank === cfg.rank);
+                  const player = displayedRanking.find(
+                    (row) => row.display_rank === cfg.rank,
+                  );
                   return (
                     <div key={cfg.rank} className={`flex flex-col items-center gap-1.5 ${cfg.order}`}>
                       {player ? (
@@ -213,8 +241,12 @@ export default function RankingModal() {
                             {player.name}
                           </p>
                           <p className="text-white font-black text-xl">
-                            {player.total_goals}
-                            <span className="text-xs font-normal ml-0.5">点</span>
+                            {rankingMode === "goals"
+                              ? player.total_goals
+                              : player.adjusted_score.toFixed(1)}
+                            <span className="text-xs font-normal ml-0.5">
+                              {rankingMode === "goals" ? "点" : "補正"}
+                            </span>
                           </p>
                         </>
                       ) : (
@@ -234,21 +266,36 @@ export default function RankingModal() {
 
             {/* 全ランキング */}
             <div className="bg-background max-h-56 overflow-y-auto">
-              {ranking.map((row) => (
+              {displayedRanking.map((row) => (
                 <div
                   key={row.member_id}
                   className={`flex items-center px-4 py-2.5 border-b last:border-0 ${
-                    row.rank <= 3 ? "bg-amber-50/60 dark:bg-amber-950/20" : ""
+                    row.display_rank <= 3 ? "bg-amber-50/60 dark:bg-amber-950/20" : ""
                   }`}
                 >
                   <span className="w-8 text-center font-bold text-sm text-muted-foreground">
-                    {row.rank === 1 ? "🥇" : row.rank === 2 ? "🥈" : row.rank === 3 ? "🥉" : row.rank}
+                    {row.display_rank === 1
+                      ? "🥇"
+                      : row.display_rank === 2
+                        ? "🥈"
+                        : row.display_rank === 3
+                          ? "🥉"
+                          : row.display_rank}
                   </span>
                   <span className="flex-1 font-semibold text-sm">{row.name}</span>
                   <div className="flex items-center gap-3 text-sm">
-                    <span className="font-bold text-base">{row.total_goals}<span className="text-muted-foreground text-xs ml-0.5 font-normal">点</span></span>
+                    <span className="font-bold text-base">
+                      {rankingMode === "goals"
+                        ? row.total_goals
+                        : row.adjusted_score.toFixed(1)}
+                      <span className="text-muted-foreground text-xs ml-0.5 font-normal">
+                        {rankingMode === "goals" ? "点" : "補正"}
+                      </span>
+                    </span>
                     <span className="text-muted-foreground text-xs w-12 text-right">
-                      {row.total_events > 0 ? `${Math.round((row.participated_events / row.total_events) * 100)}%` : "-"}
+                      {row.total_events > 0
+                        ? `${Math.round(row.participation_rate * 100)}%`
+                        : "-"}
                     </span>
                   </div>
                 </div>
