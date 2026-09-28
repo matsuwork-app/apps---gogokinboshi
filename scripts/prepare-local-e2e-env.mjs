@@ -26,6 +26,7 @@ for (const key of ["password", "passwordHash", "sessionSecret"]) {
 }
 
 const values = {
+  ACCESS_MODE: "line",
   NEXT_PUBLIC_SUPABASE_URL: status.API_URL,
   NEXT_PUBLIC_SUPABASE_ANON_KEY: status.ANON_KEY,
   SUPABASE_SERVICE_ROLE_KEY: status.SERVICE_ROLE_KEY,

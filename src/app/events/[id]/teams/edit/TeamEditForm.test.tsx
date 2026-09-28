@@ -2,9 +2,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/app/actions/events", () => ({
-  reassignEventTeamMembers: vi.fn(),
+  createEventTurn: vi.fn(),
 }));
-vi.mock("@/app/actions/auth", () => ({ unlockManager: vi.fn() }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
 }));
@@ -30,31 +29,27 @@ describe("チーム編成フォーム", () => {
         eventId="event-1"
         teams={teams}
         members={members}
-        hasUnfinishedMatch={false}
-        initialCanManage
       />,
     );
 
     expect(markup).toContain("青木");
     expect(markup).toContain("本日 2点");
     expect(markup).toContain('aria-label="青木の所属チーム"');
-    expect(markup).toContain("次に作成する試合から反映");
-    expect(markup).toContain("過去の試合結果やメンバー構成は変わりません");
-    expect(markup).toContain("編成を保存");
+    expect(markup).toContain("新しいターンを作成");
+    expect(markup).toContain("過去ターンの得点とメンバー構成は変わりません");
+    expect(markup).not.toContain("管理パスコード");
   });
 
-  it("未終了試合があると保存を無効化して理由を表示する", () => {
+  it("空のチームがあると新しいターンの作成を無効化する", () => {
     const markup = renderToStaticMarkup(
       <TeamEditForm
         eventId="event-1"
         teams={teams}
-        members={members}
-        hasUnfinishedMatch
-        initialCanManage={false}
+        members={members.map((member) => ({ ...member, eventTeamId: "team-a" }))}
       />,
     );
 
-    expect(markup).toContain("未終了の試合があります");
-    expect(markup).toMatch(/<button[^>]*disabled[^>]*>編成を保存<\/button>/);
+    expect(markup).toContain("1名以上必要です");
+    expect(markup).toMatch(/<button[^>]*disabled[^>]*>新しいターンを作成<\/button>/);
   });
 });

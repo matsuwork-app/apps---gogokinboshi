@@ -4,13 +4,6 @@ import RankingModal from "@/components/RankingModal";
 import { getDefaultDashboardPeriod } from "@/lib/rankings/date-range";
 import { getPublicRankings } from "@/lib/rankings/server";
 
-function formatSeconds(s: number) {
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  if (h > 0) return `${h}時間${m}分`;
-  return `${m}分`;
-}
-
 export default async function DashboardPage({
   searchParams,
 }: {
@@ -63,7 +56,7 @@ export default async function DashboardPage({
         <RankingModal />
       </div>
       <PeriodFilter from={fromDate} to={toDate} />
-      <RankingTable ranking={ranking} formatSeconds={formatSeconds} />
+      <RankingTable ranking={ranking} />
     </div>
   );
 }

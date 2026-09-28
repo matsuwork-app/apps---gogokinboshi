@@ -21,14 +21,6 @@ import {
 import { BarChart3, ArrowRight, Loader2 } from "lucide-react";
 import type { RankingRow } from "@/types";
 
-function formatSeconds(s: number) {
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  if (h > 0) return `${h}時間${m}分`;
-  if (m > 0) return `${m}分`;
-  return "-";
-}
-
 const PODIUM = [
   { rank: 2, emoji: "🥈", bg: "from-slate-300 to-slate-400", height: "h-20", order: "order-1", label: "2位" },
   { rank: 1, emoji: "🥇", bg: "from-yellow-400 to-amber-500", height: "h-28", order: "order-2", label: "1位" },
@@ -258,7 +250,6 @@ export default function RankingModal() {
                     <span className="text-muted-foreground text-xs w-12 text-right">
                       {row.total_events > 0 ? `${Math.round((row.participated_events / row.total_events) * 100)}%` : "-"}
                     </span>
-                    <span className="text-muted-foreground text-xs w-14 text-right">{formatSeconds(row.total_seconds)}</span>
                   </div>
                 </div>
               ))}

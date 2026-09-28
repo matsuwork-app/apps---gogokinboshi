@@ -11,10 +11,8 @@ import type { RankingRow } from "@/types";
 
 export default function RankingTable({
   ranking,
-  formatSeconds,
 }: {
   ranking: RankingRow[];
-  formatSeconds: (s: number) => string;
 }) {
   if (ranking.every((r) => r.total_goals === 0)) {
     return (
@@ -33,7 +31,6 @@ export default function RankingTable({
             <TableHead>名前</TableHead>
             <TableHead className="text-right">得点</TableHead>
             <TableHead className="text-right">参加率</TableHead>
-            <TableHead className="text-right">出場時間</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -64,9 +61,6 @@ export default function RankingTable({
                 {row.total_events > 0
                   ? `${Math.round((row.participated_events / row.total_events) * 100)}%`
                   : "-"}
-              </TableCell>
-              <TableCell className="text-right text-muted-foreground text-sm">
-                {row.total_seconds > 0 ? formatSeconds(row.total_seconds) : "-"}
               </TableCell>
             </TableRow>
           ))}

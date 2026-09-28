@@ -5,7 +5,20 @@ export type Database = {
 
   "public": {
           Tables: {
-            "e2e_environment_guard": {
+            "app_users": {
+                  Row: {
+                    "auth_user_id": string,"avatar_url": string | null,"created_at": string,"display_name": string,"id": string,"line_user_id": string,"role": string,"status": string,"updated_at": string
+                  }
+                  Insert: {
+                    "auth_user_id": string,"avatar_url"?: string | null,"created_at"?: string,"display_name": string,"id"?: string,"line_user_id": string,"role"?: string,"status"?: string,"updated_at"?: string
+                  }
+                  Update: {
+                    "auth_user_id"?: string,"avatar_url"?: string | null,"created_at"?: string,"display_name"?: string,"id"?: string,"line_user_id"?: string,"role"?: string,"status"?: string,"updated_at"?: string
+                  }
+                  Relationships: [
+
+                  ]
+                },"e2e_environment_guard": {
                   Row: {
                     "marker": string
                   }
@@ -99,6 +112,25 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"event_turns": {
+                  Row: {
+                    "created_at": string,"event_id": string,"id": string,"turn_number": number
+                  }
+                  Insert: {
+                    "created_at"?: string,"event_id": string,"id"?: string,"turn_number": number
+                  }
+                  Update: {
+                    "created_at"?: string,"event_id"?: string,"id"?: string,"turn_number"?: number
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "event_turns_event_id_fkey"
+      columns: ["event_id"]
+isOneToOne: false
+      referencedRelation: "events"
+      referencedColumns: ["id"]
+    }
+                  ]
                 },"events": {
                   Row: {
                     "created_at": string | null,"event_date": string,"id": string,"notes": string | null,"team_count": number
@@ -114,13 +146,13 @@ isOneToOne: false
                   ]
                 },"goals": {
                   Row: {
-                    "created_at": string | null,"id": string,"match_id": string,"member_id": string,"scored_at": string | null
+                    "created_at": string | null,"event_turn_id": string | null,"id": string,"match_id": string | null,"member_id": string,"scored_at": string | null
                   }
                   Insert: {
-                    "created_at"?: string | null,"id"?: string,"match_id": string,"member_id": string,"scored_at"?: string | null
+                    "created_at"?: string | null,"event_turn_id"?: string | null,"id"?: string,"match_id"?: string | null,"member_id": string,"scored_at"?: string | null
                   }
                   Update: {
-                    "created_at"?: string | null,"id"?: string,"match_id"?: string,"member_id"?: string,"scored_at"?: string | null
+                    "created_at"?: string | null,"event_turn_id"?: string | null,"id"?: string,"match_id"?: string | null,"member_id"?: string,"scored_at"?: string | null
                   }
                   Relationships: [
                     {
@@ -141,6 +173,12 @@ isOneToOne: false
 isOneToOne: false
       referencedRelation: "members"
       referencedColumns: ["id"]
+    },{
+      foreignKeyName: "goals_turn_member_fkey"
+      columns: ["event_turn_id","member_id"]
+isOneToOne: false
+      referencedRelation: "turn_team_members"
+      referencedColumns: ["event_turn_id","member_id"]
     }
                   ]
                 },"match_lineups": {
@@ -262,13 +300,55 @@ isOneToOne: false
       referencedColumns: ["id"]
     }
                   ]
+                },"turn_team_members": {
+                  Row: {
+                    "created_at": string,"event_id": string,"event_team_id": string,"event_turn_id": string,"id": string,"member_id": string
+                  }
+                  Insert: {
+                    "created_at"?: string,"event_id": string,"event_team_id": string,"event_turn_id": string,"id"?: string,"member_id": string
+                  }
+                  Update: {
+                    "created_at"?: string,"event_id"?: string,"event_team_id"?: string,"event_turn_id"?: string,"id"?: string,"member_id"?: string
+                  }
+                  Relationships: [
+                    {
+      foreignKeyName: "turn_team_members_member_id_fkey"
+      columns: ["member_id"]
+isOneToOne: false
+      referencedRelation: "members"
+      referencedColumns: ["id"]
+    },{
+      foreignKeyName: "turn_team_members_participant_fkey"
+      columns: ["event_id","member_id"]
+isOneToOne: false
+      referencedRelation: "event_participants"
+      referencedColumns: ["event_id","member_id"]
+    },{
+      foreignKeyName: "turn_team_members_team_fkey"
+      columns: ["event_id","event_team_id"]
+isOneToOne: false
+      referencedRelation: "event_teams"
+      referencedColumns: ["event_id","id"]
+    },{
+      foreignKeyName: "turn_team_members_turn_fkey"
+      columns: ["event_turn_id","event_id"]
+isOneToOne: false
+      referencedRelation: "event_turns"
+      referencedColumns: ["id","event_id"]
+    }
+                  ]
                 }
           }
           Views: {
             [_ in never]: never
           }
           Functions: {
-            "create_event_with_teams":
+            "create_event_turn":
+{ Args: { "p_assignments": Json,"p_event_id": string }; Returns: {
+              "turn_id": string,"turn_number": number
+            }[]
+                           },
+"create_event_with_teams":
 { Args: { "p_event_date": string,"p_notes": string,"p_teams": Json }; Returns: string
                            },
 "create_match_with_teams":
@@ -276,8 +356,14 @@ isOneToOne: false
                            },
 "get_public_rankings":
 { Args: { "p_from_date": string,"p_to_date": string }; Returns: {
-              "member_id": string,"name": string,"participated_events": number,"rank": number,"total_events": number,"total_goals": number,"total_seconds": number
+              "member_id": string,"name": string,"participated_events": number,"rank": number,"total_events": number,"total_goals": number
             }[]
+                           },
+"is_app_admin":
+{ Args: Record<PropertyKey, never>; Returns: boolean
+                           },
+"is_approved_app_user":
+{ Args: Record<PropertyKey, never>; Returns: boolean
                            },
 "reassign_event_team_members":
 { Args: { "p_assignments": Json,"p_event_id": string }; Returns: undefined

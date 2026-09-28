@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { hasManagerSession } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import TeamEditForm, {
   type MemberForTeamEdit,
@@ -41,7 +40,6 @@ export default async function TeamEditPage({
 }) {
   const { id: eventId } = await params;
   const supabase = await createClient();
-  const initialCanManage = await hasManagerSession();
 
   const { data: event } = await supabase
     .from("events")
@@ -50,7 +48,7 @@ export default async function TeamEditPage({
     .single();
   if (!event) notFound();
 
-  const [teamsResult, participantsResult, membershipsResult, goalsResult, matchesResult] =
+  const [teamsResult, participantsResult, membershipsResult, legacyGoalsResult, turnGoalsResult] =
     await Promise.all([
       supabase
         .from("event_teams")
@@ -68,16 +66,21 @@ export default async function TeamEditPage({
       supabase
         .from("goals")
         .select("member_id,matches!inner(event_id)")
+        .not("match_id", "is", null)
         .eq("matches.event_id", eventId),
-      supabase.from("matches").select("status").eq("event_id", eventId),
+      supabase
+        .from("goals")
+        .select("member_id,turn_team_members!inner(event_id)")
+        .not("event_turn_id", "is", null)
+        .eq("turn_team_members.event_id", eventId),
     ]);
 
   const loadError = [
     teamsResult.error,
     participantsResult.error,
     membershipsResult.error,
-    goalsResult.error,
-    matchesResult.error,
+    legacyGoalsResult.error,
+    turnGoalsResult.error,
   ].find((error) => error !== null);
   if (loadError) {
     throw new Error("チーム編成データの読み込みに失敗しました", {
@@ -102,7 +105,7 @@ export default async function TeamEditPage({
     ]),
   );
   const dailyGoals = new Map<string, number>();
-  (goalsResult.data ?? []).forEach(({ member_id }) => {
+  [...(legacyGoalsResult.data ?? []), ...(turnGoalsResult.data ?? [])].forEach(({ member_id }) => {
     dailyGoals.set(member_id, (dailyGoals.get(member_id) ?? 0) + 1);
   });
 
@@ -122,10 +125,6 @@ export default async function TeamEditPage({
         : [];
     })
     .sort((first, second) => first.name.localeCompare(second.name, "ja"));
-
-  const hasUnfinishedMatch = (matchesResult.data ?? []).some(
-    ({ status }) => status !== "finished",
-  );
 
   return (
     <div className="space-y-6">
@@ -151,8 +150,6 @@ export default async function TeamEditPage({
         eventId={eventId}
         teams={teams}
         members={members}
-        hasUnfinishedMatch={hasUnfinishedMatch}
-        initialCanManage={initialCanManage}
       />
     </div>
   );

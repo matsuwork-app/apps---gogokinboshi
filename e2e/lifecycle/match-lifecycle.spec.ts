@@ -1,23 +1,15 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { expect, test } from "@playwright/test";
 
 const MEMBER_NAMES = ["E2E-A", "E2E-B", "E2E-C"] as const;
-const EVENT_MARKER = "E2E-LIFECYCLE";
+const EVENT_MARKER = "E2E-TURN-LIFECYCLE";
+const AUTH_EMAIL = `lifecycle-${Date.now()}@example.test`;
+const AUTH_PASSWORD = "lifecycle-e2e-password";
 
 let admin: SupabaseClient;
 let eventId: string | null = null;
-let matchId: string | null = null;
-let nextMatchId: string | null = null;
-
-async function countOpenIntervals(id: string) {
-  const { count, error } = await admin
-    .from("playing_intervals")
-    .select("id", { count: "exact", head: true })
-    .eq("match_id", id)
-    .is("ended_at", null);
-  if (error) throw error;
-  return count;
-}
+let authUserId: string | null = null;
 
 test.beforeAll(async () => {
   admin = createClient(
@@ -25,17 +17,75 @@ test.beforeAll(async () => {
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { persistSession: false, autoRefreshToken: false } },
   );
-
   await admin.from("events").delete().like("notes", `${EVENT_MARKER}%`);
+
+  const { data: created, error: createError } = await admin.auth.admin.createUser({
+    email: AUTH_EMAIL,
+    password: AUTH_PASSWORD,
+    email_confirm: true,
+  });
+  if (createError || !created.user) throw createError ?? new Error("E2E利用者を作成できません");
+  authUserId = created.user.id;
+
+  const { error: appUserError } = await admin.from("app_users").insert({
+    auth_user_id: authUserId,
+    line_user_id: `e2e-${authUserId}`,
+    display_name: "Lifecycle E2E Admin",
+    role: "admin",
+    status: "approved",
+  });
+  if (appUserError) throw appUserError;
 });
 
 test.afterAll(async () => {
   if (eventId) await admin.from("events").delete().eq("id", eventId);
   else await admin.from("events").delete().like("notes", `${EVENT_MARKER}%`);
+  if (authUserId) await admin.auth.admin.deleteUser(authUserId);
 });
 
-test("3チームイベントから試合終了まで状態と記録を永続化する", async ({ page }) => {
+test("3チームの得点入力、タイマー、組み替え後の第2ターンを永続化する", async ({
+  context,
+  page,
+}) => {
   test.setTimeout(90_000);
+  const authCookies = new Map<string, { value: string; options: CookieOptions }>();
+  const auth = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll: () =>
+          [...authCookies].map(([name, cookie]) => ({ name, value: cookie.value })),
+        setAll: (cookies) => {
+          for (const { name, value, options } of cookies) {
+            authCookies.set(name, { value, options });
+          }
+        },
+      },
+    },
+  );
+  const { error: signInError } = await auth.auth.signInWithPassword({
+    email: AUTH_EMAIL,
+    password: AUTH_PASSWORD,
+  });
+  expect(signInError).toBeNull();
+  await context.addCookies(
+    [...authCookies].map(([name, cookie]) => ({
+      name,
+      value: cookie.value,
+      url: "http://127.0.0.1:3000",
+      httpOnly: cookie.options.httpOnly,
+      secure: cookie.options.secure,
+      sameSite:
+        cookie.options.sameSite === true
+          ? "Strict"
+          : cookie.options.sameSite === "strict"
+            ? "Strict"
+            : cookie.options.sameSite === "none"
+              ? "None"
+              : "Lax",
+    })),
+  );
 
   await page.goto("/events/new");
   await page.getByLabel("メモ（任意）").fill(`${EVENT_MARKER}-${Date.now()}`);
@@ -44,201 +94,75 @@ test("3チームイベントから試合終了まで状態と記録を永続化�
     await page.getByRole("button", { name: memberName, exact: true }).click();
   }
   await page.getByRole("button", { name: "均等に振り分け" }).click();
-  await expect(page.getByText("Aチーム（1名）")).toBeVisible();
-  await expect(page.getByText("Bチーム（1名）")).toBeVisible();
-  await expect(page.getByText("Cチーム（1名）")).toBeVisible();
-
   await page.getByRole("button", { name: "イベントを作成する" }).click();
-  const passcodeDialog = page.getByRole("dialog", { name: "パスコードを入力" });
-  await passcodeDialog
-    .getByRole("textbox", { name: "管理パスコード" })
-    .fill(process.env.E2E_MANAGER_PASSWORD!);
-  await passcodeDialog.getByRole("button", { name: "GO" }).click();
   await page.waitForURL(/\/events\/[0-9a-f-]+$/);
   eventId = page.url().match(/\/events\/([0-9a-f-]+)$/)?.[1] ?? null;
   expect(eventId).toBeTruthy();
 
-  const { data: eventTeams, error: eventTeamsError } = await admin
-    .from("event_teams")
-    .select("id, team_code")
-    .eq("event_id", eventId!)
-    .order("sort_order");
-  expect(eventTeamsError).toBeNull();
-  expect(eventTeams?.map((team) => team.team_code)).toEqual(["A", "B", "C"]);
+  await expect(page.getByRole("heading", { name: "第1ターン" })).toBeVisible();
+  await page.getByRole("link", { name: "得点入力を開く" }).click();
+  await page.waitForURL(/\/turns\/[0-9a-f-]+$/);
 
-  await page.getByRole("link", { name: "試合を追加" }).click();
-  const restingTeams = page.getByRole("heading", { name: "休憩チーム" }).locator("..");
-  await expect(restingTeams.getByText("C: チームC", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "この対戦で試合を開始する" }).click();
-  await page.waitForURL(/\/matches\/[0-9a-f-]+$/);
-  matchId = page.url().match(/\/matches\/([0-9a-f-]+)$/)?.[1] ?? null;
-  expect(matchId).toBeTruthy();
-
-  const { data: pendingMatch } = await admin
-    .from("matches")
-    .select("status")
-    .eq("id", matchId!)
-    .single();
-  expect(pendingMatch?.status).toBe("pending");
-
-  await page.getByRole("button", { name: "キックオフ" }).click();
-  await expect(page.getByTestId("match-status")).toHaveText("進行中");
-  await expect.poll(async () => countOpenIntervals(matchId!)).toBe(2);
-
-  await page.waitForTimeout(1_200);
+  await expect(page.getByRole("timer")).toHaveText("07:00");
+  await page.getByRole("button", { name: "5分" }).click();
+  await expect(page.getByRole("timer")).toHaveText("05:00");
+  await page.getByRole("button", { name: "開始" }).click();
+  await expect(page.getByRole("button", { name: "一時停止" })).toBeVisible();
   await page.getByRole("button", { name: "一時停止" }).click();
-  await expect(page.getByTestId("match-status")).toHaveText("一時停止中");
-  await expect.poll(async () => countOpenIntervals(matchId!)).toBe(0);
+  await page.getByRole("button", { name: "リセット" }).click();
+  await expect(page.getByRole("timer")).toHaveText("05:00");
 
-  await page.getByRole("button", { name: "再開" }).click();
-  await expect(page.getByTestId("match-status")).toHaveText("進行中");
-  await expect.poll(async () => countOpenIntervals(matchId!)).toBe(2);
-
-  await page.getByRole("button", { name: "E2E-Aに1点追加" }).click();
-  await expect(page.getByLabel("E2E-A 1得点")).toBeVisible();
-  await expect(page.getByTestId("score-side-1")).toHaveText("1");
-
-  await page.getByRole("button", { name: "E2E-Aをベンチに変更" }).click();
-  await expect(page.getByRole("button", { name: "E2E-Aを出場中に変更" })).toBeVisible();
-  await page.getByRole("button", { name: "E2E-Aを出場中に変更" }).click();
-  await expect(page.getByRole("button", { name: "E2E-Aをベンチに変更" })).toBeVisible();
-
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "試合終了" }).click();
-  await expect(page.getByTestId("match-status")).toHaveText("終了");
-  await expect.poll(async () => countOpenIntervals(matchId!)).toBe(0);
-
-  await page.reload();
-  await expect(page.getByTestId("match-status")).toHaveText("終了");
-  await expect(page.getByLabel("E2E-A 1得点")).toBeVisible();
-  await expect(page.getByTestId("score-side-1")).toHaveText("1");
-
-  await page.getByRole("button", { name: "E2E-Aの得点を1点取り消す" }).click();
-  await expect(page.getByLabel("E2E-A 0得点")).toBeVisible();
-  await expect(page.getByTestId("score-side-1")).toHaveText("0");
-  await expect
-    .poll(async () => {
-      const { count } = await admin
-        .from("goals")
-        .select("id", { count: "exact", head: true })
-        .eq("match_id", matchId!);
-      return count;
-    })
-    .toBe(0);
-
-  await page.getByRole("button", { name: "E2E-Aに1点追加" }).click();
-  await expect(page.getByLabel("E2E-A 1得点")).toBeVisible();
-  await expect(page.getByTestId("score-side-1")).toHaveText("1");
-  await expect
-    .poll(async () => {
-      const { count } = await admin
-        .from("goals")
-        .select("id", { count: "exact", head: true })
-        .eq("match_id", matchId!);
-      return count;
-    })
-    .toBe(1);
-
-  const { data: finishedMatch, error: finishedMatchError } = await admin
-    .from("matches")
-    .select("status, started_at, ended_at, active_started_at")
-    .eq("id", matchId!)
-    .single();
-  expect(finishedMatchError).toBeNull();
-  expect(finishedMatch?.status).toBe("finished");
-  expect(finishedMatch?.started_at).toBeTruthy();
-  expect(finishedMatch?.ended_at).toBeTruthy();
-  expect(finishedMatch?.active_started_at).toBeNull();
-
-  const { count: goalCount, error: goalCountError } = await admin
-    .from("goals")
-    .select("id", { count: "exact", head: true })
-    .eq("match_id", matchId!);
-  expect(goalCountError).toBeNull();
-  expect(goalCount).toBe(1);
-
-  const { count: intervalCount, error: intervalCountError } = await admin
-    .from("playing_intervals")
-    .select("id", { count: "exact", head: true })
-    .eq("match_id", matchId!);
-  expect(intervalCountError).toBeNull();
-  expect(intervalCount).toBeGreaterThan(2);
-
-  const { data: firstLineupBeforeReassignment, error: firstLineupBeforeError } =
-    await admin
-      .from("match_lineups")
-      .select("member_id,match_teams!inner(event_team_id)")
-      .eq("match_id", matchId!)
-      .order("member_id");
-  expect(firstLineupBeforeError).toBeNull();
-
-  await page.goto(`/events/${eventId}`);
+  const addGoalButton = page.getByRole("button", { name: "E2E-Aの得点を1点追加" });
+  await addGoalButton.click();
+  await expect(page.getByLabel("E2E-A ターン得点 1点")).toBeVisible();
   await expect(page.getByLabel("E2E-A 本日 1点")).toBeVisible();
-  await page.getByRole("link", { name: "編成を変更" }).click();
-  await expect(page.getByRole("heading", { name: "チーム編成を変更" })).toBeVisible();
-  await expect(page.getByText("変更は次に作成する試合から反映されます。")).toBeVisible();
+  await expect(addGoalButton).toBeEnabled();
 
+  await page.getByRole("link", { name: "イベント詳細へ戻る" }).click();
+  await page.getByRole("link", { name: "チームを組み替え" }).click();
   await page.getByLabel("E2E-Aの所属チーム").selectOption({ label: "C: チームC" });
   await page.getByLabel("E2E-Cの所属チーム").selectOption({ label: "A: チームA" });
-  await page.getByRole("button", { name: "編成を保存" }).click();
-  await page.waitForURL(new RegExp(`/events/${eventId}$`));
+  await page.getByRole("button", { name: "新しいターンを作成" }).click();
+  await page.waitForURL(/\/turns\/[0-9a-f-]+$/);
 
-  const { data: currentMembership, error: currentMembershipError } = await admin
-    .from("event_team_members")
-    .select("member_id,event_teams!inner(team_code)")
-    .eq("event_id", eventId!);
-  expect(currentMembershipError).toBeNull();
-  const memberNameById = new Map(
-    MEMBER_NAMES.map((name, index) => [
-      `10000000-0000-4000-8000-00000000000${index + 1}`,
-      name,
-    ]),
-  );
-  const teamByMemberName = new Map(
-    (currentMembership ?? []).map((membership) => {
-      const relation = Array.isArray(membership.event_teams)
-        ? membership.event_teams[0]
-        : membership.event_teams;
-      return [memberNameById.get(membership.member_id), relation?.team_code];
-    }),
-  );
-  expect(teamByMemberName.get("E2E-A")).toBe("C");
-  expect(teamByMemberName.get("E2E-B")).toBe("B");
-  expect(teamByMemberName.get("E2E-C")).toBe("A");
-
-  const { data: firstLineupAfterReassignment, error: firstLineupAfterError } =
-    await admin
-      .from("match_lineups")
-      .select("member_id,match_teams!inner(event_team_id)")
-      .eq("match_id", matchId!)
-      .order("member_id");
-  expect(firstLineupAfterError).toBeNull();
-  expect(firstLineupAfterReassignment).toEqual(firstLineupBeforeReassignment);
-
-  await page.getByRole("link", { name: "試合を追加" }).click();
+  await expect(page.getByRole("heading", { name: "第2ターン" })).toBeVisible();
+  await expect(page.getByLabel("E2E-A ターン得点 0点")).toBeVisible();
   await expect(page.getByLabel("E2E-A 本日 1点")).toBeVisible();
-  await expect(page.getByLabel("E2E-B 本日 0点")).toBeVisible();
-  await page.getByRole("button", { name: "この対戦で試合を開始する" }).click();
-  await page.waitForURL(/\/matches\/[0-9a-f-]+$/);
-  nextMatchId = page.url().match(/\/matches\/([0-9a-f-]+)$/)?.[1] ?? null;
-  expect(nextMatchId).toBeTruthy();
+  const addSecondTurnGoalButton = page.getByRole("button", {
+    name: "E2E-Aの得点を1点追加",
+  });
+  await addSecondTurnGoalButton.click();
+  await expect(page.getByLabel("E2E-A 本日 2点")).toBeVisible();
+  await expect(addSecondTurnGoalButton).toBeEnabled();
 
-  await expect(page.getByLabel("E2E-A 本日 1点")).toBeVisible();
-  await expect(page.getByLabel("E2E-B 本日 0点")).toBeVisible();
+  const { data: turns, error: turnsError } = await admin
+    .from("event_turns")
+    .select("id,turn_number")
+    .eq("event_id", eventId!)
+    .order("turn_number");
+  expect(turnsError).toBeNull();
+  expect(turns?.map(({ turn_number }) => turn_number)).toEqual([1, 2]);
 
-  const { data: nextLineup, error: nextLineupError } = await admin
-    .from("match_lineups")
-    .select("member_id")
-    .eq("match_id", nextMatchId!);
-  expect(nextLineupError).toBeNull();
-  expect(nextLineup?.map(({ member_id }) => memberNameById.get(member_id)).sort()).toEqual([
-    "E2E-A",
-    "E2E-C",
-  ]);
+  const { count: goalCount, error: goalError } = await admin
+    .from("goals")
+    .select("id", { count: "exact", head: true })
+    .in("event_turn_id", turns!.map(({ id }) => id));
+  expect(goalError).toBeNull();
+  expect(goalCount).toBe(2);
 
-  await page.goto(`/events/${eventId}/matches/${matchId}`);
-  for (const memberName of MEMBER_NAMES) {
-    await expect(page.getByText(memberName, { exact: true })).toHaveCount(1);
-  }
-  await expect(page.getByLabel("E2E-A 本日 1点")).toHaveCount(1);
+  const { data: snapshots, error: snapshotsError } = await admin
+    .from("turn_team_members")
+    .select("event_turn_id,member_id,event_team_id")
+    .in("event_turn_id", turns!.map(({ id }) => id));
+  expect(snapshotsError).toBeNull();
+  expect(snapshots).toHaveLength(6);
+  const firstA = snapshots?.find(
+    ({ event_turn_id, member_id }) =>
+      event_turn_id === turns![0].id && member_id === "10000000-0000-4000-8000-000000000001",
+  );
+  const secondA = snapshots?.find(
+    ({ event_turn_id, member_id }) =>
+      event_turn_id === turns![1].id && member_id === "10000000-0000-4000-8000-000000000001",
+  );
+  expect(firstA?.event_team_id).not.toBe(secondA?.event_team_id);
 });

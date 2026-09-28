@@ -8,7 +8,6 @@ import { createEvent } from "@/app/actions/events";
 import { toast } from "sonner";
 import type { Member } from "@/types";
 import { cn } from "@/lib/utils";
-import PasscodeDialog from "@/components/PasscodeDialog";
 
 type TeamCount = 2 | 3 | 4;
 type TeamPosition = 1 | 2 | 3 | 4;
@@ -25,8 +24,6 @@ export default function EventNewForm({ members, today }: { members: Member[]; to
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [assignments, setAssignments] = useState<Record<string, TeamPosition | null>>({});
   const [isPending, startTransition] = useTransition();
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [pendingFormData, setPendingFormData] = useState<FormData | null>(null);
 
   const activeTeams = TEAM_OPTIONS.slice(0, teamCount);
 
@@ -96,13 +93,6 @@ export default function EventNewForm({ members, today }: { members: Member[]; to
     formData.set("team_assignments", JSON.stringify(
       selectedMembers.map((member) => ({ member_id: member.id, position: assignments[member.id] })),
     ));
-    setPendingFormData(formData);
-    setDialogOpen(true);
-  }
-
-  function handleConfirm() {
-    if (!pendingFormData) return;
-    const formData = pendingFormData;
     startTransition(async () => {
       const result = await createEvent(formData);
       if (result?.error) toast.error(result.error);
@@ -110,8 +100,7 @@ export default function EventNewForm({ members, today }: { members: Member[]; to
   }
 
   return (
-    <>
-      <form action={handleSubmit} className="space-y-6">
+    <form action={handleSubmit} className="space-y-6">
         <div className="space-y-2">
           <Label htmlFor="event_date">日付</Label>
           <Input id="event_date" name="event_date" type="date" defaultValue={today} required className="max-w-xs" />
@@ -226,9 +215,6 @@ export default function EventNewForm({ members, today }: { members: Member[]; to
         <Button type="submit" disabled={isPending || selectedIds.size < teamCount} className="w-full" size="lg">
           {isPending ? "作成中..." : "イベントを作成する"}
         </Button>
-      </form>
-
-      <PasscodeDialog open={dialogOpen} onClose={() => setDialogOpen(false)} onConfirm={handleConfirm} />
-    </>
+    </form>
   );
 }

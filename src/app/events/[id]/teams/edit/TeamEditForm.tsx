@@ -4,8 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
-import { reassignEventTeamMembers } from "@/app/actions/events";
-import PasscodeDialog from "@/components/PasscodeDialog";
+import { createEventTurn } from "@/app/actions/events";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -60,14 +59,10 @@ export default function TeamEditForm({
   eventId,
   teams,
   members,
-  hasUnfinishedMatch,
-  initialCanManage,
 }: {
   eventId: string;
   teams: TeamForEdit[];
   members: MemberForTeamEdit[];
-  hasUnfinishedMatch: boolean;
-  initialCanManage: boolean;
 }) {
   const router = useRouter();
   const [assignments, setAssignments] = useState<Record<string, string>>(() =>
@@ -75,8 +70,6 @@ export default function TeamEditForm({
       members.map((member) => [member.id, member.eventTeamId]),
     ),
   );
-  const [canManage, setCanManage] = useState(initialCanManage);
-  const [dialogOpen, setDialogOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   const hasUnassignedMember = members.some(
@@ -86,8 +79,7 @@ export default function TeamEditForm({
     (team) =>
       !members.some((member) => assignments[member.id] === team.id),
   );
-  const cannotSave =
-    hasUnfinishedMatch || hasUnassignedMember || Boolean(emptyTeam) || isPending;
+  const cannotSave = hasUnassignedMember || Boolean(emptyTeam) || isPending;
 
   function distributeEvenly() {
     setAssignments(
@@ -101,10 +93,6 @@ export default function TeamEditForm({
   }
 
   function saveAssignments() {
-    if (hasUnfinishedMatch) {
-      toast.error("未終了の試合を終了してから編成を変更してください");
-      return;
-    }
     if (hasUnassignedMember) {
       toast.error("すべての参加者をチームへ割り当ててください");
       return;
@@ -116,7 +104,7 @@ export default function TeamEditForm({
 
     startTransition(async () => {
       try {
-        const result = await reassignEventTeamMembers(
+        const result = await createEventTurn(
           eventId,
           members.map((member) => ({
             member_id: member.id,
@@ -127,39 +115,27 @@ export default function TeamEditForm({
           toast.error(result.error);
           return;
         }
-        toast.success("チーム編成を保存しました");
-        router.push(`/events/${eventId}`);
+        toast.success(`第${result.turnNumber}ターンを作成しました`);
+        router.push(`/events/${eventId}/turns/${result.turnId}`);
       } catch {
-        setCanManage(false);
-        setDialogOpen(true);
-        toast.error("管理パスコードをもう一度入力してください");
+        toast.error("新しいターンを作成できませんでした");
       }
     });
   }
 
   function handleSave() {
     if (cannotSave) return;
-    if (canManage) saveAssignments();
-    else setDialogOpen(true);
+    saveAssignments();
   }
 
   return (
     <div className="space-y-6">
       <section className="rounded-lg border bg-muted/30 p-4 text-sm">
-        <p className="font-medium">変更は次に作成する試合から反映されます。</p>
+        <p className="font-medium">チームを組み替えて新しいターンを作成します。</p>
         <p className="mt-1 text-muted-foreground">
-          過去の試合結果やメンバー構成は変わりません。
+          過去ターンの得点とメンバー構成は変わりません。
         </p>
       </section>
-
-      {hasUnfinishedMatch && (
-        <p
-          role="alert"
-          className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive"
-        >
-          未終了の試合があります。試合を終了してからチーム編成を変更してください。
-        </p>
-      )}
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
@@ -173,7 +149,7 @@ export default function TeamEditForm({
           variant="outline"
           size="sm"
           onClick={distributeEvenly}
-          disabled={hasUnfinishedMatch || isPending}
+          disabled={isPending}
         >
           均等に振り分け
         </Button>
@@ -202,7 +178,7 @@ export default function TeamEditForm({
                     [member.id]: event.target.value,
                   }))
                 }
-                disabled={hasUnfinishedMatch || isPending}
+                disabled={isPending}
                 className="h-11 rounded-lg border border-input bg-background px-3 text-sm font-medium disabled:opacity-50"
               >
                 <option value="" disabled>
@@ -259,17 +235,8 @@ export default function TeamEditForm({
         className="w-full"
         size="lg"
       >
-        {isPending ? "保存中..." : "編成を保存"}
+        {isPending ? "作成中..." : "新しいターンを作成"}
       </Button>
-
-      <PasscodeDialog
-        open={dialogOpen}
-        onClose={() => setDialogOpen(false)}
-        onConfirm={() => {
-          setCanManage(true);
-          saveAssignments();
-        }}
-      />
     </div>
   );
 }
