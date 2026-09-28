@@ -210,7 +210,7 @@ export default function MatchClient({
 
   const handleGoalAdd = useCallback(
     async (memberId: string) => {
-      if (!canManage || status === "finished" || pendingGoalIds.has(memberId)) {
+      if (!canManage || pendingGoalIds.has(memberId)) {
         return;
       }
 
@@ -261,12 +261,12 @@ export default function MatchClient({
           return next;
         });
       }
-    }, [canManage, matchState.id, pendingGoalIds, status]
+    }, [canManage, matchState.id, pendingGoalIds]
   );
 
   const handleGoalRemove = useCallback(
     async (memberId: string) => {
-      if (!canManage || status === "finished" || pendingGoalIds.has(memberId)) {
+      if (!canManage || pendingGoalIds.has(memberId)) {
         return;
       }
       const memberGoalIds = goalIds[memberId] ?? [];
@@ -309,7 +309,7 @@ export default function MatchClient({
           return next;
         });
       }
-    }, [canManage, goalIds, matchState.id, pendingGoalIds, status]
+    }, [canManage, goalIds, matchState.id, pendingGoalIds]
   );
 
   const badgeVariant =
@@ -385,12 +385,12 @@ export default function MatchClient({
         )}
       </div>
 
-      {!canManage && status !== "finished" && (
+      {!canManage && (
         <Button
           onClick={() => setPasscodeOpen(true)}
           className="h-14 w-full text-lg font-bold"
         >
-          記録を開始
+          {status === "finished" ? "得点を修正" : "記録を開始"}
         </Button>
       )}
 
@@ -507,7 +507,8 @@ function PlayerCard({
   onGoalAdd: (id: string) => void;
   onGoalRemove: (id: string) => void;
 }) {
-  const isReadOnly = !canManage || matchStatus === "finished";
+  const isPlayingReadOnly = !canManage || matchStatus === "finished";
+  const isGoalReadOnly = !canManage;
   const playingLabel = player.isPlaying ? "出場中" : "ベンチ";
   const playingClassName = cn(
     "min-h-11 w-16 rounded-lg border py-2 text-xs font-bold transition-colors",
@@ -529,7 +530,7 @@ function PlayerCard({
           : "border-muted bg-muted/40"
       )}
     >
-      {isReadOnly ? (
+      {isPlayingReadOnly ? (
         <span className={playingClassName}>{playingLabel}</span>
       ) : (
         <button
@@ -553,7 +554,7 @@ function PlayerCard({
       </span>
 
       <div className="flex items-center gap-2">
-        {!isReadOnly && (
+        {!isGoalReadOnly && (
           <button
             type="button"
             onClick={() => onGoalRemove(player.member.id)}
@@ -575,7 +576,7 @@ function PlayerCard({
         >
           {player.goals}
         </span>
-        {!isReadOnly && (
+        {!isGoalReadOnly && (
           <button
             type="button"
             onClick={() => onGoalAdd(player.member.id)}

@@ -112,6 +112,32 @@ test("3チームイベントから試合終了まで状態と記録を永続化�
   await expect(page.getByLabel("E2E-A 1得点")).toBeVisible();
   await expect(page.getByTestId("score-side-1")).toHaveText("1");
 
+  await page.getByRole("button", { name: "E2E-Aの得点を1点取り消す" }).click();
+  await expect(page.getByLabel("E2E-A 0得点")).toBeVisible();
+  await expect(page.getByTestId("score-side-1")).toHaveText("0");
+  await expect
+    .poll(async () => {
+      const { count } = await admin
+        .from("goals")
+        .select("id", { count: "exact", head: true })
+        .eq("match_id", matchId!);
+      return count;
+    })
+    .toBe(0);
+
+  await page.getByRole("button", { name: "E2E-Aに1点追加" }).click();
+  await expect(page.getByLabel("E2E-A 1得点")).toBeVisible();
+  await expect(page.getByTestId("score-side-1")).toHaveText("1");
+  await expect
+    .poll(async () => {
+      const { count } = await admin
+        .from("goals")
+        .select("id", { count: "exact", head: true })
+        .eq("match_id", matchId!);
+      return count;
+    })
+    .toBe(1);
+
   const { data: finishedMatch, error: finishedMatchError } = await admin
     .from("matches")
     .select("status, started_at, ended_at, active_started_at")
