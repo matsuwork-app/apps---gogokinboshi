@@ -9,6 +9,28 @@ import type { Match } from "@/types";
 
 type ActionError = { error: string };
 
+async function resolveMatchEventId(
+  supabase: ReturnType<typeof createAdminClient>,
+  matchId: string
+): Promise<{ eventId?: string; error?: string }> {
+  const { data, error } = await supabase
+    .from("matches")
+    .select("event_id")
+    .eq("id", matchId)
+    .single();
+
+  if (error || !data) {
+    return { error: error?.message ?? "試合が見つかりません" };
+  }
+  return { eventId: data.event_id };
+}
+
+function revalidateGoalPaths(eventId: string, matchId: string) {
+  revalidatePath(`/events/${eventId}`);
+  revalidatePath(`/events/${eventId}/matches/${matchId}`);
+  revalidatePath("/");
+}
+
 export async function createMatch(
   eventId: string,
   firstTeamId: string,
@@ -75,13 +97,19 @@ export async function addGoal(
 ): Promise<{ id?: string; error?: string }> {
   await requireManagerSession();
   const supabase = createAdminClient();
+  const match = await resolveMatchEventId(supabase, matchId);
+  if (match.error || !match.eventId) {
+    return { error: match.error ?? "試合が見つかりません" };
+  }
   const { data, error } = await supabase
     .from("goals")
     .insert({ match_id: matchId, member_id: memberId })
     .select("id")
     .single();
 
-  return error ? { error: error.message } : { id: data.id };
+  if (error) return { error: error.message };
+  revalidateGoalPaths(match.eventId, matchId);
+  return { id: data.id };
 }
 
 export async function removeGoal(
@@ -91,12 +119,23 @@ export async function removeGoal(
 ): Promise<ActionError | { error: null }> {
   await requireManagerSession();
   const supabase = createAdminClient();
-  const { error } = await supabase
+  const match = await resolveMatchEventId(supabase, matchId);
+  if (match.error || !match.eventId) {
+    return { error: match.error ?? "試合が見つかりません" };
+  }
+  const { data, error } = await supabase
     .from("goals")
     .delete()
     .eq("id", goalId)
     .eq("match_id", matchId)
-    .eq("member_id", memberId);
+    .eq("member_id", memberId)
+    .select("id")
+    .maybeSingle();
 
-  return { error: error?.message ?? null };
+  if (error) return { error: error.message };
+  if (!data) {
+    return { error: "得点が見つかりません。画面を更新してください" };
+  }
+  revalidateGoalPaths(match.eventId, matchId);
+  return { error: null };
 }
