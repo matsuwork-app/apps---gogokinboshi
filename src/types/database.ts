@@ -156,13 +156,6 @@ isOneToOne: false
                   }
                   Relationships: [
                     {
-      foreignKeyName: "goals_turn_member_fkey"
-      columns: ["event_turn_id","member_id"]
-isOneToOne: false
-      referencedRelation: "turn_team_members"
-      referencedColumns: ["event_turn_id","member_id"]
-    },
-                    {
       foreignKeyName: "goals_match_id_fkey"
       columns: ["match_id"]
 isOneToOne: false
@@ -180,6 +173,12 @@ isOneToOne: false
 isOneToOne: false
       referencedRelation: "members"
       referencedColumns: ["id"]
+    },{
+      foreignKeyName: "goals_turn_member_fkey"
+      columns: ["event_turn_id","member_id"]
+isOneToOne: false
+      referencedRelation: "turn_team_members"
+      referencedColumns: ["event_turn_id","member_id"]
     }
                   ]
                 },"match_lineups": {
@@ -344,13 +343,13 @@ isOneToOne: false
             [_ in never]: never
           }
           Functions: {
-            "create_event_with_teams":
-{ Args: { "p_event_date": string,"p_notes": string,"p_teams": Json }; Returns: string
-                           },
-"create_event_turn":
+            "create_event_turn":
 { Args: { "p_assignments": Json,"p_event_id": string }; Returns: {
               "turn_id": string,"turn_number": number
             }[]
+                           },
+"create_event_with_teams":
+{ Args: { "p_event_date": string,"p_notes": string,"p_teams": Json }; Returns: string
                            },
 "create_match_with_teams":
 { Args: { "p_event_id": string,"p_event_team_ids": (string)[],"p_lineups"?: Json }; Returns: string
