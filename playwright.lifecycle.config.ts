@@ -19,7 +19,7 @@ export default defineConfig({
     url: "http://127.0.0.1:3000",
     env: {
       ...process.env,
-      ACCESS_MODE: "legacy",
+      ACCESS_MODE: "line",
     },
     reuseExistingServer: false,
     timeout: 120_000,

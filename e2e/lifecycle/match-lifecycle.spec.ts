@@ -1,14 +1,15 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { expect, test } from "@playwright/test";
-
-import { createManagerSessionToken } from "../../src/lib/auth/crypto";
 
 const MEMBER_NAMES = ["E2E-A", "E2E-B", "E2E-C"] as const;
 const EVENT_MARKER = "E2E-TURN-LIFECYCLE";
-const MANAGER_SESSION_COOKIE = "gogokinboshi_manager_session";
+const AUTH_EMAIL = `lifecycle-${Date.now()}@example.test`;
+const AUTH_PASSWORD = "lifecycle-e2e-password";
 
 let admin: SupabaseClient;
 let eventId: string | null = null;
+let authUserId: string | null = null;
 
 test.beforeAll(async () => {
   admin = createClient(
@@ -17,11 +18,29 @@ test.beforeAll(async () => {
     { auth: { persistSession: false, autoRefreshToken: false } },
   );
   await admin.from("events").delete().like("notes", `${EVENT_MARKER}%`);
+
+  const { data: created, error: createError } = await admin.auth.admin.createUser({
+    email: AUTH_EMAIL,
+    password: AUTH_PASSWORD,
+    email_confirm: true,
+  });
+  if (createError || !created.user) throw createError ?? new Error("E2E利用者を作成できません");
+  authUserId = created.user.id;
+
+  const { error: appUserError } = await admin.from("app_users").insert({
+    auth_user_id: authUserId,
+    line_user_id: `e2e-${authUserId}`,
+    display_name: "Lifecycle E2E Admin",
+    role: "admin",
+    status: "approved",
+  });
+  if (appUserError) throw appUserError;
 });
 
 test.afterAll(async () => {
   if (eventId) await admin.from("events").delete().eq("id", eventId);
   else await admin.from("events").delete().like("notes", `${EVENT_MARKER}%`);
+  if (authUserId) await admin.auth.admin.deleteUser(authUserId);
 });
 
 test("3チームの得点入力、タイマー、組み替え後の第2ターンを永続化する", async ({
@@ -29,16 +48,44 @@ test("3チームの得点入力、タイマー、組み替え後の第2ターン
   page,
 }) => {
   test.setTimeout(90_000);
-  const sessionSecret = process.env.MANAGER_SESSION_SECRET!;
-  await context.addCookies([
+  const authCookies = new Map<string, { value: string; options: CookieOptions }>();
+  const auth = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
-      name: MANAGER_SESSION_COOKIE,
-      value: createManagerSessionToken(sessionSecret),
-      url: "http://127.0.0.1:3000",
-      httpOnly: true,
-      sameSite: "Lax",
+      cookies: {
+        getAll: () =>
+          [...authCookies].map(([name, cookie]) => ({ name, value: cookie.value })),
+        setAll: (cookies) => {
+          for (const { name, value, options } of cookies) {
+            authCookies.set(name, { value, options });
+          }
+        },
+      },
     },
-  ]);
+  );
+  const { error: signInError } = await auth.auth.signInWithPassword({
+    email: AUTH_EMAIL,
+    password: AUTH_PASSWORD,
+  });
+  expect(signInError).toBeNull();
+  await context.addCookies(
+    [...authCookies].map(([name, cookie]) => ({
+      name,
+      value: cookie.value,
+      url: "http://127.0.0.1:3000",
+      httpOnly: cookie.options.httpOnly,
+      secure: cookie.options.secure,
+      sameSite:
+        cookie.options.sameSite === true
+          ? "Strict"
+          : cookie.options.sameSite === "strict"
+            ? "Strict"
+            : cookie.options.sameSite === "none"
+              ? "None"
+              : "Lax",
+    })),
+  );
 
   await page.goto("/events/new");
   await page.getByLabel("メモ（任意）").fill(`${EVENT_MARKER}-${Date.now()}`);
