@@ -23,7 +23,9 @@ export async function signInWithLine(): Promise<void> {
   const requestHeaders = await headers();
   const supabase = await createClient();
   const { data, error } = await supabase.auth.signInWithOAuth({
-    provider: "custom:line",
+    // LINEのWebログインはHS256のID tokenを返すため、Discoveryが宣言する
+    // ES256検証を避け、UserInfo APIを使う手動OAuthプロバイダーを利用する。
+    provider: "custom:line-oauth",
     options: {
       redirectTo: `${getSiteUrl(requestHeaders.get("origin"))}/auth/callback`,
     },

@@ -3,6 +3,30 @@ import { describe, expect, it } from "vitest";
 import { extractLineProfile, resolvePersistedAccess } from "./profile";
 
 describe("LINE OIDCプロフィール", () => {
+  it("custom:line-oauth identityのUserInfo claimsをプロフィールへ変換する", () => {
+    expect(
+      extractLineProfile({
+        id: "auth-user",
+        identities: [
+          {
+            provider: "custom:line-oauth",
+            identity_data: {
+              sub: "line-oauth-user",
+              name: "金星 花子",
+              picture: "https://example.com/oauth-avatar.png",
+            },
+          },
+        ],
+        user_metadata: {},
+      }),
+    ).toEqual({
+      authUserId: "auth-user",
+      lineUserId: "line-oauth-user",
+      displayName: "金星 花子",
+      avatarUrl: "https://example.com/oauth-avatar.png",
+    });
+  });
+
   it("custom:line identityのID token claimsをプロフィールへ変換する", () => {
     expect(
       extractLineProfile({

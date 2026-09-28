@@ -36,7 +36,9 @@ function optionalHttpUrl(value: unknown): string | null {
 
 export function extractLineProfile(user: AuthUserLike): LineProfile {
   const identity = user.identities?.find(
-    (candidate) => candidate.provider === "custom:line",
+    (candidate) =>
+      candidate.provider === "custom:line-oauth" ||
+      candidate.provider === "custom:line",
   );
 
   if (!identity) {
