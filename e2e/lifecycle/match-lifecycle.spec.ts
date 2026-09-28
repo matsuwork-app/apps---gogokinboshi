@@ -112,9 +112,11 @@ test("3チームの得点入力、タイマー、組み替え後の第2ターン
   await page.getByRole("button", { name: "リセット" }).click();
   await expect(page.getByRole("timer")).toHaveText("05:00");
 
-  await page.getByRole("button", { name: "E2E-Aの得点を1点追加" }).click();
+  const addGoalButton = page.getByRole("button", { name: "E2E-Aの得点を1点追加" });
+  await addGoalButton.click();
   await expect(page.getByLabel("E2E-A ターン得点 1点")).toBeVisible();
   await expect(page.getByLabel("E2E-A 本日 1点")).toBeVisible();
+  await expect(addGoalButton).toBeEnabled();
 
   await page.getByRole("link", { name: "イベント詳細へ戻る" }).click();
   await page.getByRole("link", { name: "チームを組み替え" }).click();
@@ -126,8 +128,12 @@ test("3チームの得点入力、タイマー、組み替え後の第2ターン
   await expect(page.getByRole("heading", { name: "第2ターン" })).toBeVisible();
   await expect(page.getByLabel("E2E-A ターン得点 0点")).toBeVisible();
   await expect(page.getByLabel("E2E-A 本日 1点")).toBeVisible();
-  await page.getByRole("button", { name: "E2E-Aの得点を1点追加" }).click();
+  const addSecondTurnGoalButton = page.getByRole("button", {
+    name: "E2E-Aの得点を1点追加",
+  });
+  await addSecondTurnGoalButton.click();
   await expect(page.getByLabel("E2E-A 本日 2点")).toBeVisible();
+  await expect(addSecondTurnGoalButton).toBeEnabled();
 
   const { data: turns, error: turnsError } = await admin
     .from("event_turns")
