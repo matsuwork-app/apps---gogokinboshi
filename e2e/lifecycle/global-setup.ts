@@ -21,8 +21,8 @@ export default async function globalSetup() {
   if (!/^http:\/\/(127\.0\.0\.1|localhost):3000$/.test(baseUrl)) {
     throw new Error("Lifecycle E2E only accepts a loopback application URL");
   }
-  if (!process.env.E2E_MANAGER_PASSWORD) {
-    throw new Error("E2E_MANAGER_PASSWORD is required for lifecycle E2E");
+  if (!process.env.MANAGER_SESSION_SECRET) {
+    throw new Error("MANAGER_SESSION_SECRET is required for lifecycle E2E");
   }
 
   const supabase = createClient(supabaseUrl, serviceRoleKey, {

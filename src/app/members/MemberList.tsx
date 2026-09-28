@@ -1,26 +1,17 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useTransition } from "react";
 import type { Member } from "@/types";
 import { Button } from "@/components/ui/button";
 import { deleteMember } from "@/app/actions/members";
 import { toast } from "sonner";
 import { Trash2, User } from "lucide-react";
-import PasscodeDialog from "@/components/PasscodeDialog";
 
 export default function MemberList({ members }: { members: Member[] }) {
   const [isPending, startTransition] = useTransition();
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [targetMember, setTargetMember] = useState<Member | null>(null);
-
   function handleDeleteClick(member: Member) {
-    setTargetMember(member);
-    setDialogOpen(true);
-  }
-
-  function handleConfirm() {
-    if (!targetMember) return;
-    const { id, name } = targetMember;
+    const { id, name } = member;
+    if (!confirm(`「${name}」を削除しますか？`)) return;
     startTransition(async () => {
       const result = await deleteMember(id);
       if (result.error) {
@@ -40,8 +31,7 @@ export default function MemberList({ members }: { members: Member[] }) {
   }
 
   return (
-    <>
-      <ul className="space-y-2">
+    <ul className="space-y-2">
         {members.map((member) => (
           <li
             key={member.id}
@@ -63,13 +53,6 @@ export default function MemberList({ members }: { members: Member[] }) {
             </Button>
           </li>
         ))}
-      </ul>
-
-      <PasscodeDialog
-        open={dialogOpen}
-        onClose={() => setDialogOpen(false)}
-        onConfirm={handleConfirm}
-      />
-    </>
+    </ul>
   );
 }

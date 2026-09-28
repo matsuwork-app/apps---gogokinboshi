@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { requireManagerSession } from "@/lib/auth";
+import { requireApprovedUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type TeamAssignment = {
@@ -37,7 +37,7 @@ function parseTeamAssignments(value: FormDataEntryValue | null): TeamAssignment[
 }
 
 export async function createEvent(formData: FormData) {
-  await requireManagerSession();
+  await requireApprovedUser();
   const eventDate = formData.get("event_date")?.toString();
   const notes = formData.get("notes")?.toString() || "";
   const teamCount = Number(formData.get("team_count"));
@@ -81,7 +81,7 @@ export async function createEvent(formData: FormData) {
 }
 
 export async function deleteEvent(id: string) {
-  await requireManagerSession();
+  await requireApprovedUser();
   const supabase = createAdminClient();
   const { error } = await supabase.from("events").delete().eq("id", id);
   if (error) return { error: error.message };
@@ -113,11 +113,11 @@ function parseEventTeamReassignments(
   return assignments;
 }
 
-export async function reassignEventTeamMembers(
+export async function createEventTurn(
   eventId: string,
   input: unknown,
 ) {
-  await requireManagerSession();
+  await requireApprovedUser();
 
   if (typeof eventId !== "string" || eventId.trim().length === 0) {
     return { error: "イベントが指定されていません" };
@@ -143,15 +143,23 @@ export async function reassignEventTeamMembers(
   }
 
   const supabase = createAdminClient();
-  const { error } = await supabase.rpc("reassign_event_team_members", {
+  const { data, error } = await supabase.rpc("create_event_turn", {
     p_event_id: eventId,
     p_assignments: assignments,
   });
 
   if (error) return { error: error.message };
+  const turn = Array.isArray(data) ? data[0] : null;
+  if (!turn?.turn_id || !Number.isInteger(turn.turn_number)) {
+    return { error: "新しいターンを作成できませんでした" };
+  }
 
   revalidatePath(`/events/${eventId}`);
   revalidatePath(`/events/${eventId}/teams/edit`);
-  revalidatePath(`/events/${eventId}/matches/new`);
-  return { error: null };
+  revalidatePath(`/events/${eventId}/turns/${turn.turn_id}`);
+  return {
+    error: null,
+    turnId: turn.turn_id,
+    turnNumber: turn.turn_number,
+  };
 }

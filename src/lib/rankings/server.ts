@@ -33,7 +33,6 @@ function normalizeRow(row: RankingRpcRow): RankingRow {
     total_goals: toFiniteNumber(row.total_goals, "得点数"),
     participated_events: toFiniteNumber(row.participated_events, "参加回数"),
     total_events: toFiniteNumber(row.total_events, "イベント数"),
-    total_seconds: toFiniteNumber(row.total_seconds, "出場時間"),
     rank: toFiniteNumber(row.rank, "順位"),
   };
 }

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
-import { requireManagerSession } from "@/lib/auth";
+import { requireApprovedUser } from "@/lib/auth";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { Match } from "@/types";
 
@@ -36,7 +36,7 @@ export async function createMatch(
   firstTeamId: string,
   secondTeamId: string
 ): Promise<ActionError | never> {
-  await requireManagerSession();
+  await requireApprovedUser();
   if (!eventId || !firstTeamId || !secondTeamId) {
     return { error: "対戦する2チームを選択してください" };
   }
@@ -62,7 +62,7 @@ export async function transitionMatch(
   expectedStatus: Match["status"],
   nextStatus: Match["status"]
 ): Promise<{ data?: Match; error?: string }> {
-  await requireManagerSession();
+  await requireApprovedUser();
   const supabase = createAdminClient();
   const { data, error } = await supabase.rpc("transition_match", {
     p_match_id: matchId,
@@ -81,7 +81,7 @@ export async function setPlayerPlaying(
   memberId: string,
   isPlaying: boolean
 ): Promise<ActionError | { error: null }> {
-  await requireManagerSession();
+  await requireApprovedUser();
   const supabase = createAdminClient();
   const { error } = await supabase.rpc("set_player_playing", {
     p_match_id: matchId,
@@ -95,7 +95,7 @@ export async function addGoal(
   matchId: string,
   memberId: string
 ): Promise<{ id?: string; error?: string }> {
-  await requireManagerSession();
+  await requireApprovedUser();
   const supabase = createAdminClient();
   const match = await resolveMatchEventId(supabase, matchId);
   if (match.error || !match.eventId) {
@@ -117,7 +117,7 @@ export async function removeGoal(
   memberId: string,
   goalId: string
 ): Promise<ActionError | { error: null }> {
-  await requireManagerSession();
+  await requireApprovedUser();
   const supabase = createAdminClient();
   const match = await resolveMatchEventId(supabase, matchId);
   if (match.error || !match.eventId) {

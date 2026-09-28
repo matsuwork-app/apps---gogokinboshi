@@ -23,7 +23,6 @@ export type RankingRow = {
   total_goals: number;
   participated_events: number;
   total_events: number;
-  total_seconds: number;
   rank: number;
 };
 

@@ -2,20 +2,20 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   adminClient: undefined as unknown,
-  requireManagerSession: vi.fn(),
+  requireApprovedUser: vi.fn(),
   revalidatePath: vi.fn(),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
 vi.mock("@/lib/auth", () => ({
-  requireManagerSession: mocks.requireManagerSession,
+  requireApprovedUser: mocks.requireApprovedUser,
 }));
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => mocks.adminClient,
 }));
 
-import { reassignEventTeamMembers } from "./events";
+import { createEventTurn } from "./events";
 
 const assignments = [
   { member_id: "member-1", event_team_id: "team-a" },
@@ -25,26 +25,29 @@ const assignments = [
 describe("チーム再編成Server Action", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.requireManagerSession.mockResolvedValue(undefined);
+    mocks.requireApprovedUser.mockResolvedValue({ id: "user-1" });
   });
 
   it("管理者認証後にRPCを実行し関連画面を再検証する", async () => {
-    const rpc = vi.fn().mockResolvedValue({ error: null });
+    const rpc = vi.fn().mockResolvedValue({
+      data: [{ turn_id: "turn-2", turn_number: 2 }],
+      error: null,
+    });
     mocks.adminClient = { rpc };
 
     await expect(
-      reassignEventTeamMembers("event-1", assignments),
-    ).resolves.toEqual({ error: null });
+      createEventTurn("event-1", assignments),
+    ).resolves.toEqual({ error: null, turnId: "turn-2", turnNumber: 2 });
 
-    expect(mocks.requireManagerSession).toHaveBeenCalledOnce();
-    expect(rpc).toHaveBeenCalledWith("reassign_event_team_members", {
+    expect(mocks.requireApprovedUser).toHaveBeenCalledOnce();
+    expect(rpc).toHaveBeenCalledWith("create_event_turn", {
       p_event_id: "event-1",
       p_assignments: assignments,
     });
     expect(mocks.revalidatePath.mock.calls).toEqual([
       ["/events/event-1"],
       ["/events/event-1/teams/edit"],
-      ["/events/event-1/matches/new"],
+      ["/events/event-1/turns/turn-2"],
     ]);
   });
 
@@ -53,13 +56,13 @@ describe("チーム再編成Server Action", () => {
     mocks.adminClient = { rpc };
 
     await expect(
-      reassignEventTeamMembers("event-1", [
+      createEventTurn("event-1", [
         { member_id: "member-1", event_team_id: "team-a" },
         { member_id: "member-1", event_team_id: "team-b" },
       ]),
     ).resolves.toEqual({ error: "同じ参加者を複数チームへ割り当てることはできません" });
 
-    expect(mocks.requireManagerSession).toHaveBeenCalledOnce();
+    expect(mocks.requireApprovedUser).toHaveBeenCalledOnce();
     expect(rpc).not.toHaveBeenCalled();
   });
 
@@ -68,7 +71,7 @@ describe("チーム再編成Server Action", () => {
     mocks.adminClient = { rpc };
 
     await expect(
-      reassignEventTeamMembers("event-1", [
+      createEventTurn("event-1", [
         { member_id: "member-1", event_team_id: "team-a" },
         { member_id: "member-2", event_team_id: "team-a" },
       ]),

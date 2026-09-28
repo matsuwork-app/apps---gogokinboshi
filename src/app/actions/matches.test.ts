@@ -2,14 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   adminClient: undefined as unknown,
-  requireManagerSession: vi.fn(),
+  requireApprovedUser: vi.fn(),
   revalidatePath: vi.fn(),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
 vi.mock("@/lib/auth", () => ({
-  requireManagerSession: mocks.requireManagerSession,
+  requireApprovedUser: mocks.requireApprovedUser,
 }));
 vi.mock("@/lib/supabase/admin", () => ({
   createAdminClient: () => mocks.adminClient,
@@ -38,7 +38,7 @@ function expectGoalPathsRevalidated() {
 describe("得点Server Actions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.requireManagerSession.mockResolvedValue(undefined);
+    mocks.requireApprovedUser.mockResolvedValue({ id: "user-1" });
   });
 
   it("DBから解決したイベントに対して得点追加後の関連画面を再検証する", async () => {

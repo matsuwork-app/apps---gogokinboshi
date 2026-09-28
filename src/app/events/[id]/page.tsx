@@ -1,63 +1,13 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { CheckCircle, Clock, Pause, Play, Plus, UsersRound } from "lucide-react";
+import { History, UsersRound } from "lucide-react";
 
 import { buttonVariants } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { getNextRecommendedPair, getRestingTeamIds, type MatchPair } from "@/lib/teams/rotation";
 import { createClient } from "@/lib/supabase/server";
 import { cn } from "@/lib/utils";
 
-const STATUS_LABEL = {
-  pending: { label: "未開始", icon: Clock, color: "secondary" },
-  active: { label: "進行中", icon: Play, color: "default" },
-  paused: { label: "一時停止中", icon: Pause, color: "secondary" },
-  finished: { label: "終了", icon: CheckCircle, color: "outline" },
-} as const;
-
-type Team = {
-  id: string;
-  team_code: string;
-  display_name: string;
-  sort_order: number;
-};
-
-type TeamMember = {
-  id: string;
-  name: string;
-};
-
-type TeamMemberRow = {
-  event_team_id: string;
-  members: TeamMember | TeamMember[] | null;
-};
-
-type MatchTeam = { id: string; event_team_id: string; side: number };
-type MatchRow = {
-  id: string;
-  match_number: number;
-  status: keyof typeof STATUS_LABEL;
-  started_at: string | null;
-  ended_at: string | null;
-  match_teams: MatchTeam[] | MatchTeam | null;
-};
-
-const TEAM_BADGE: Record<string, string> = {
-  A: "bg-blue-500 text-white",
-  B: "bg-green-500 text-white",
-  C: "bg-amber-500 text-white",
-  D: "bg-rose-500 text-white",
-};
-
-function normalizeMatchTeams(value: MatchRow["match_teams"]) {
-  return (Array.isArray(value) ? value : value ? [value] : []).sort(
-    (first, second) => first.side - second.side
-  );
-}
-
-function normalizeMember(value: TeamMemberRow["members"]): TeamMember | null {
-  return Array.isArray(value) ? (value[0] ?? null) : value;
-}
+type TurnRow = { id: string; turn_number: number; created_at: string };
+type LegacyMatchRow = { id: string; match_number: number };
 
 export default async function EventDetailPage({
   params,
@@ -67,101 +17,47 @@ export default async function EventDetailPage({
   const { id } = await params;
   const supabase = await createClient();
 
-  const { data: event } = await supabase
-    .from("events")
-    .select("*")
-    .eq("id", id)
-    .single();
-  if (!event) notFound();
-
-  const [matchesResult, teamsResult, participantsResult, goalsResult, teamMembersResult] =
+  const [eventResult, turnsResult, participantsResult, legacyMatchesResult] =
     await Promise.all([
+      supabase.from("events").select("id,event_date,notes").eq("id", id).single(),
       supabase
-        .from("matches")
-        .select("id,match_number,status,started_at,ended_at,match_teams(id,event_team_id,side)")
+        .from("event_turns")
+        .select("id,turn_number,created_at")
         .eq("event_id", id)
-        .order("match_number"),
-      supabase
-        .from("event_teams")
-        .select("id,team_code,display_name,sort_order")
-        .eq("event_id", id)
-        .order("sort_order"),
+        .order("turn_number", { ascending: false }),
       supabase
         .from("event_participants")
         .select("members(id,name)")
         .eq("event_id", id),
       supabase
-        .from("goals")
-        .select("member_id,match_id,matches!inner(event_id)")
-        .eq("matches.event_id", id),
-      supabase
-        .from("event_team_members")
-        .select("event_team_id,members(id,name)")
-        .eq("event_id", id),
+        .from("matches")
+        .select("id,match_number")
+        .eq("event_id", id)
+        .order("match_number"),
     ]);
 
-  const matches = (matchesResult.data ?? []) as unknown as MatchRow[];
-  const teams = (teamsResult.data ?? []) as Team[];
-  const goals = goalsResult.data ?? [];
-  const memberList =
-    participantsResult.data?.flatMap((participant) =>
-      participant.members ? [participant.members] : []
-    ) ?? [];
-  const teamMemberRows = (teamMembersResult.data ?? []) as unknown as TeamMemberRow[];
+  if (!eventResult.data) notFound();
+  const loadError = [
+    turnsResult.error,
+    participantsResult.error,
+    legacyMatchesResult.error,
+  ].find(Boolean);
+  if (loadError) {
+    throw new Error("イベントデータの読み込みに失敗しました", { cause: loadError });
+  }
 
-  const matchIds = matches.map((match) => match.id);
-  const { data: matchLineups } = matchIds.length
-    ? await supabase
-        .from("match_lineups")
-        .select("match_id,member_id,team")
-        .in("match_id", matchIds)
-    : { data: [] };
-
-  const goalSummary = new Map<string, number>();
-  goals.forEach(({ member_id }) => {
-    goalSummary.set(member_id, (goalSummary.get(member_id) ?? 0) + 1);
+  const event = eventResult.data;
+  const turns = (turnsResult.data ?? []) as TurnRow[];
+  const latestTurn = turns[0];
+  const legacyMatches = (legacyMatchesResult.data ?? []) as LegacyMatchRow[];
+  const memberNames = (participantsResult.data ?? []).flatMap(({ members }) => {
+    const member = Array.isArray(members) ? members[0] : members;
+    return member?.name ? [member.name] : [];
   });
-
-  const membersByTeam = new Map<string, TeamMember[]>();
-  teamMemberRows.forEach((row) => {
-    const member = normalizeMember(row.members);
-    if (!member) return;
-    const current = membersByTeam.get(row.event_team_id) ?? [];
-    current.push(member);
-    membersByTeam.set(row.event_team_id, current);
-  });
-
-  const lineupByMatch = new Map<string, Map<string, "A" | "B">>();
-  (matchLineups ?? []).forEach(({ match_id, member_id, team }) => {
-    if (!lineupByMatch.has(match_id)) lineupByMatch.set(match_id, new Map());
-    lineupByMatch.get(match_id)!.set(member_id, team as "A" | "B");
-  });
-
-  const matchGoals = new Map<string, { A: number; B: number }>();
-  goals.forEach(({ member_id, match_id }) => {
-    const side = lineupByMatch.get(match_id)?.get(member_id);
-    if (!side) return;
-    if (!matchGoals.has(match_id)) matchGoals.set(match_id, { A: 0, B: 0 });
-    matchGoals.get(match_id)![side] += 1;
-  });
-
-  const teamById = new Map(teams.map((team) => [team.id, team]));
-  const history: MatchPair[] = matches.flatMap((match) => {
-    const ids = normalizeMatchTeams(match.match_teams).map((team) => team.event_team_id);
-    return ids.length === 2 ? [[ids[0], ids[1]] as MatchPair] : [];
-  });
-  const nextPair = teams.length >= 2
-    ? getNextRecommendedPair(teams.map((team) => team.id), history)
-    : null;
-  const restingTeams = nextPair
-    ? getRestingTeamIds(teams.map((team) => team.id), nextPair)
-        .map((teamId) => teamById.get(teamId))
-        .filter((team): team is Team => Boolean(team))
-    : [];
 
   return (
     <div className="space-y-6">
-      <div>
+      <header>
         <h1 className="text-2xl font-bold">
           {new Date(event.event_date).toLocaleDateString("ja-JP", {
             year: "numeric",
@@ -173,141 +69,83 @@ export default async function EventDetailPage({
         </h1>
         {event.notes && <p className="mt-1 text-muted-foreground">{event.notes}</p>}
         <p className="mt-1 text-sm text-muted-foreground">
-          参加: {memberList.map((member) => member.name).join("、")}
+          参加: {memberNames.join("、")}
         </p>
-      </div>
+      </header>
 
-      {nextPair && (
-        <section className="space-y-3 rounded-xl border bg-card p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-medium text-muted-foreground">次のおすすめ対戦</p>
-              <p className="mt-1 text-lg font-bold">
-                {teamById.get(nextPair[0])?.display_name} vs {teamById.get(nextPair[1])?.display_name}
-              </p>
-            </div>
-            <Link href={`/events/${id}/matches/new`} className={cn(buttonVariants({ size: "sm" }))}>
-              この対戦を作成
-            </Link>
-          </div>
-          {restingTeams.length > 0 && (
-            <p className="text-sm text-muted-foreground">
-              休憩: {restingTeams.map((team) => team.display_name).join("、")}
-            </p>
-          )}
+      {latestTurn ? (
+        <section className="rounded-xl border bg-card p-4">
+          <p className="text-xs font-medium text-muted-foreground">現在のチーム編成</p>
+          <h2 className="mt-1 text-xl font-bold">第{latestTurn.turn_number}ターン</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            全チームの得点入力とターン用タイマーを同じ画面で操作できます。
+          </p>
+          <Link
+            href={`/events/${id}/turns/${latestTurn.id}`}
+            className={cn(buttonVariants({ size: "lg" }), "mt-4 w-full")}
+          >
+            得点入力を開く
+          </Link>
         </section>
+      ) : (
+        <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm">
+          ターンがありません。データ更新後にもう一度開いてください。
+        </p>
       )}
 
       <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">試合</h2>
-          <Link href={`/events/${id}/matches/new`} className={cn(buttonVariants({ size: "sm" }))}>
-            <Plus size={14} className="mr-1" />
-            試合を追加
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">ターン</h2>
+            <p className="text-xs text-muted-foreground">チーム編成を変えた時だけ新しく作成します</p>
+          </div>
+          <Link
+            href={`/events/${id}/teams/edit`}
+            className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
+          >
+            <UsersRound size={14} className="mr-1" />
+            チームを組み替え
           </Link>
         </div>
-
-        {matches.length === 0 ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">
-            試合がありません。「試合を追加」から始めましょう。
-          </p>
-        ) : (
-          <ul className="space-y-2">
-            {matches.map((match) => {
-              const status = STATUS_LABEL[match.status];
-              const score = matchGoals.get(match.id) ?? { A: 0, B: 0 };
-              const pair = normalizeMatchTeams(match.match_teams);
-              const first = teamById.get(pair[0]?.event_team_id);
-              const second = teamById.get(pair[1]?.event_team_id);
-              return (
-                <li key={match.id}>
-                  <Link
-                    href={`/events/${id}/matches/${match.id}`}
-                    className="flex items-center justify-between gap-3 rounded-lg border bg-card p-4 transition-colors hover:bg-muted"
-                  >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold">第{match.match_number}試合</span>
-                        <Badge variant={status.color as "default" | "secondary" | "outline"}>
-                          {status.label}
-                        </Badge>
-                      </div>
-                      <p className="mt-1 truncate text-sm text-muted-foreground">
-                        {first?.display_name ?? "チームA"} vs {second?.display_name ?? "チームB"}
-                      </p>
-                    </div>
-                    <span className="shrink-0 text-lg font-bold">
-                      {score.A} - {score.B}
-                    </span>
-                  </Link>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+        <ul className="space-y-2">
+          {turns.map((turn, index) => (
+            <li key={turn.id}>
+              <Link
+                href={`/events/${id}/turns/${turn.id}`}
+                className="flex items-center justify-between rounded-lg border bg-card p-4 transition-colors hover:bg-muted"
+              >
+                <span className="font-semibold">第{turn.turn_number}ターン</span>
+                <span className="text-sm text-muted-foreground">
+                  {index === 0 ? "現在" : "得点を見る"}
+                </span>
+              </Link>
+            </li>
+          ))}
+        </ul>
       </section>
 
-      {teams.length > 0 && (
-        <section className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-semibold">現在のチーム編成</h2>
-              <p className="text-xs text-muted-foreground">
-                編成変更は次に作成する試合から反映されます
-              </p>
-            </div>
-            <Link
-              href={`/events/${id}/teams/edit`}
-              className={cn(buttonVariants({ size: "sm", variant: "outline" }))}
-            >
-              <UsersRound size={14} className="mr-1" />
-              編成を変更
-            </Link>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            {teams.map((team) => {
-              const teamMembers = membersByTeam.get(team.id) ?? [];
-              return (
-                <div key={team.id} className="min-w-0 rounded-lg border bg-card p-3">
-                  <div className="flex items-center gap-2">
-                    <Badge className={TEAM_BADGE[team.team_code] ?? ""}>{team.team_code}</Badge>
-                    <span className="truncate text-sm font-medium">{team.display_name}</span>
-                  </div>
-                  <ul className="mt-3 space-y-2">
-                    {teamMembers.map((member) => (
-                      <li key={member.id} className="min-w-0">
-                        <p className="truncate text-sm font-medium">{member.name}</p>
-                        <p
-                          className="text-xs tabular-nums text-muted-foreground"
-                          aria-label={`${member.name} 本日 ${goalSummary.get(member.id) ?? 0}点`}
-                        >
-                          本日 {goalSummary.get(member.id) ?? 0}点
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
-
-      {memberList.length > 0 && (
-        <section className="space-y-3">
-          <h2 className="text-lg font-semibold">当日得点まとめ</h2>
-          <ul className="grid grid-cols-2 gap-2">
-            {memberList
-              .map((member) => ({ ...member, goals: goalSummary.get(member.id) ?? 0 }))
-              .sort((first, second) => second.goals - first.goals)
-              .map((member) => (
-                <li key={member.id} className="flex items-center justify-between rounded-lg border bg-card p-3">
-                  <span className="text-sm font-medium">{member.name}</span>
-                  <span className="text-lg font-bold">{member.goals}点</span>
-                </li>
-              ))}
+      {legacyMatches.length > 0 && (
+        <details className="rounded-lg border bg-muted/20 p-4">
+          <summary className="flex cursor-pointer list-none items-center gap-2 font-medium">
+            <History size={16} />
+            以前の試合履歴（{legacyMatches.length}件）
+          </summary>
+          <p className="mt-2 text-xs text-muted-foreground">
+            旧方式で記録した得点はランキングへ引き続き合算されます。
+          </p>
+          <ul className="mt-3 grid grid-cols-2 gap-2">
+            {legacyMatches.map((match) => (
+              <li key={match.id}>
+                <Link
+                  href={`/events/${id}/matches/${match.id}`}
+                  className="block rounded-md border bg-background px-3 py-2 text-sm hover:bg-muted"
+                >
+                  第{match.match_number}試合
+                </Link>
+              </li>
+            ))}
           </ul>
-        </section>
+        </details>
       )}
     </div>
   );

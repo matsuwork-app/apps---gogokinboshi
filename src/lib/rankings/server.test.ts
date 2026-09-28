@@ -20,7 +20,6 @@ describe("getPublicRankings", () => {
           total_goals: "3",
           participated_events: "2",
           total_events: "4",
-          total_seconds: "125",
           rank: "1",
         },
       ],
@@ -35,7 +34,6 @@ describe("getPublicRankings", () => {
         total_goals: 3,
         participated_events: 2,
         total_events: 4,
-        total_seconds: 125,
         rank: 1,
       },
     ]);

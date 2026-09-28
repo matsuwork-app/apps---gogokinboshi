@@ -22,6 +22,10 @@ const REASSIGNMENT_MIGRATION_PATH = path.join(
   ROOT,
   "supabase/migrations/202609280001_reassign_event_team_members.sql"
 );
+const LINE_AUTH_TURN_MIGRATION_PATH = path.join(
+  ROOT,
+  "supabase/migrations/202609280002_line_auth_turn_scoring.sql"
+);
 const ROLLBACK_PATH = path.join(
   ROOT,
   "supabase/rollback/20260926_restore_legacy_writes.sql"
@@ -91,6 +95,10 @@ async function setRole(db, role, callback) {
   }
 }
 
+async function setAuthUser(db, userId) {
+  await db.query("select set_config('request.jwt.claim.sub', $1, false)", [userId ?? ""]);
+}
+
 const backupPath = await findBackupPath();
 const backup = JSON.parse(await readFile(backupPath, "utf8"));
 assert.equal(backup.format, "gogokinboshi-supabase-json-v1");
@@ -102,6 +110,18 @@ try {
     create role anon nologin;
     create role authenticated nologin;
     create role service_role nologin bypassrls;
+    create schema auth;
+    create table auth.users (
+      id uuid primary key,
+      created_at timestamptz not null default now()
+    );
+    create function auth.uid() returns uuid
+    language sql stable
+    as $$
+      select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid
+    $$;
+    grant usage on schema auth to authenticated, service_role;
+    grant execute on function auth.uid() to authenticated, service_role;
   `);
   await db.exec(await readFile(BASELINE_PATH, "utf8"));
 
@@ -114,6 +134,34 @@ try {
   await db.exec(await readFile(MIGRATION_PATH, "utf8"));
   await db.exec(await readFile(RANKING_MIGRATION_PATH, "utf8"));
   await db.exec(await readFile(REASSIGNMENT_MIGRATION_PATH, "utf8"));
+  await db.exec(await readFile(LINE_AUTH_TURN_MIGRATION_PATH, "utf8"));
+  await db.exec(await readFile(LINE_AUTH_TURN_MIGRATION_PATH, "utf8"));
+
+  assert.equal(
+    await scalar(db, "select to_regclass('public.app_users') is not null"),
+    true,
+    "app_users must be created"
+  );
+  assert.equal(
+    await scalar(db, "select to_regclass('public.event_turns') is not null"),
+    true,
+    "event_turns must be created"
+  );
+  assert.equal(
+    await scalar(db, "select to_regclass('public.turn_team_members') is not null"),
+    true,
+    "turn_team_members must be created"
+  );
+  assert.equal(
+    await scalar(
+      db,
+      `select is_nullable = 'YES'
+       from information_schema.columns
+       where table_schema = 'public' and table_name = 'goals' and column_name = 'match_id'`
+    ),
+    true,
+    "goals.match_id must be nullable for turn goals"
+  );
 
   for (const [table, expectedCount] of Object.entries(backup.row_counts)) {
     const actualCount = Number(await scalar(db, `select count(*) from public.${table}`));
@@ -152,7 +200,7 @@ try {
   );
   assert.equal(
     await scalar(db, "select has_table_privilege('anon', 'public.matches', 'select')"),
-    true
+    false
   );
   assert.equal(
     await scalar(db, "select has_table_privilege('anon', 'public.matches', 'insert')"),
@@ -165,6 +213,62 @@ try {
     ),
     false
   );
+  assert.equal(
+    await scalar(
+      db,
+      "select has_function_privilege('anon', 'public.get_public_rankings(date,date)', 'execute')"
+    ),
+    false
+  );
+  assert.equal(
+    await scalar(
+      db,
+      "select has_function_privilege('authenticated', 'public.get_public_rankings(date,date)', 'execute')"
+    ),
+    true
+  );
+  assert.equal(
+    await scalar(
+      db,
+      "select has_function_privilege('anon', 'public.create_event_turn(uuid,jsonb)', 'execute')"
+    ),
+    false
+  );
+  assert.equal(
+    await scalar(
+      db,
+      "select has_function_privilege('authenticated', 'public.create_event_turn(uuid,jsonb)', 'execute')"
+    ),
+    false
+  );
+  assert.equal(
+    await scalar(
+      db,
+      "select has_function_privilege('service_role', 'public.create_event_turn(uuid,jsonb)', 'execute')"
+    ),
+    true
+  );
+
+  assert.equal(
+    Number(
+      await scalar(
+        db,
+        `select count(*)
+         from public.events event
+         join public.event_turns turn
+           on turn.event_id = event.id and turn.turn_number = 1
+         where (
+           select count(*) from public.turn_team_members membership
+           where membership.event_turn_id = turn.id
+         ) <> (
+           select count(*) from public.event_team_members current_membership
+           where current_membership.event_id = event.id
+         )`
+      )
+    ),
+    0,
+    "legacy turn 1 must preserve exactly the available current membership"
+  );
 
   const memberIds = backup.data.members.slice(0, 6).map((member) => member.id);
   assert.equal(memberIds.length, 6, "at least six members are required for verification");
@@ -172,6 +276,35 @@ try {
     name: `検証チーム${String.fromCharCode(65 + index)}`,
     member_ids: memberIds.slice(index * 2, index * 2 + 2),
   }));
+  const approvedUserId = "10000000-0000-4000-8000-000000000001";
+  const pendingUserId = "10000000-0000-4000-8000-000000000002";
+  const adminUserId = "10000000-0000-4000-8000-000000000003";
+  await db.query(
+    "insert into auth.users (id) values ($1), ($2), ($3)",
+    [approvedUserId, pendingUserId, adminUserId]
+  );
+  await db.query(
+    `insert into public.app_users (auth_user_id, line_user_id, display_name, role, status)
+     values
+       ($1, 'line-approved', 'Approved member', 'member', 'approved'),
+       ($2, 'line-pending', 'Pending member', 'member', 'pending'),
+       ($3, 'line-admin', 'Approved admin', 'admin', 'approved')`,
+    [approvedUserId, pendingUserId, adminUserId]
+  );
+  assert.equal(
+    Number(await scalar(db, "select count(*) from public.app_users where id = auth_user_id")),
+    0,
+    "app_users.id must remain independent from auth.users.id"
+  );
+  await assert.rejects(
+    db.query(
+      `insert into public.app_users
+         (auth_user_id, line_user_id, display_name, role, status)
+       values ($1, 'line-duplicate', 'Duplicate auth user', 'member', 'pending')`,
+      [approvedUserId]
+    ),
+    /app_users_auth_user_id_key/i
+  );
 
   const lifecycle = await setRole(db, "service_role", async () => {
     const eventId = await scalar(
@@ -184,6 +317,17 @@ try {
       [eventId]
     );
     assert.equal(eventTeamRows.rows.length, 3);
+    const firstTurn = await db.query(
+      `select turn.id, turn.turn_number, count(membership.id)::integer as member_count
+       from public.event_turns turn
+       left join public.turn_team_members membership on membership.event_turn_id = turn.id
+       where turn.event_id = $1
+       group by turn.id, turn.turn_number`,
+      [eventId]
+    );
+    assert.deepEqual(firstTurn.rows, [
+      { id: firstTurn.rows[0].id, turn_number: 1, member_count: 6 },
+    ]);
 
     const matchId = await scalar(
       db,
@@ -203,7 +347,7 @@ try {
     await db.query("select public.transition_match($1::uuid, 'paused', 'active')", [matchId]);
     await db.query("select public.transition_match($1::uuid, 'active', 'finished')", [matchId]);
 
-    return { eventId, matchId };
+    return { eventId, matchId, firstTurnId: firstTurn.rows[0].id };
   });
 
   assert.equal(
@@ -247,7 +391,7 @@ try {
     true
   );
 
-  await setRole(db, "service_role", async () => {
+  const turnLifecycle = await setRole(db, "service_role", async () => {
     const eventTeamRows = await db.query(
       "select id, team_code from public.event_teams where event_id = $1 order by sort_order",
       [lifecycle.eventId]
@@ -354,7 +498,104 @@ try {
       ),
       /unfinished match/i
     );
+
+    for (const invalidAssignments of [
+      reassigned.slice(0, -1),
+      [...reassigned.slice(0, -1), reassigned[0]],
+      reassigned.map((assignment) =>
+        assignment.event_team_id === teamC.id
+          ? { ...assignment, event_team_id: teamA.id }
+          : assignment
+      ),
+    ]) {
+      await assert.rejects(
+        db.query(
+          "select * from public.create_event_turn($1::uuid, $2::jsonb)",
+          [lifecycle.eventId, JSON.stringify(invalidAssignments)]
+        ),
+        /every event participant exactly once|every event team must have at least one member/i
+      );
+    }
+
+    const createdTurn = await db.query(
+      "select * from public.create_event_turn($1::uuid, $2::jsonb)",
+      [lifecycle.eventId, JSON.stringify(reassigned)]
+    );
+    assert.equal(createdTurn.rows.length, 1);
+    assert.equal(createdTurn.rows[0].turn_number, 2);
+
+    const turnId = createdTurn.rows[0].turn_id;
+    assert.equal(
+      Number(
+        await scalar(
+          db,
+          "select count(*) from public.turn_team_members where event_turn_id = $1",
+          [turnId]
+        )
+      ),
+      6
+    );
+    assert.equal(
+      Number(
+        await scalar(
+          db,
+          "select count(*) from public.turn_team_members where event_turn_id = $1",
+          [lifecycle.firstTurnId]
+        )
+      ),
+      6,
+      "creating turn 2 must preserve the turn 1 snapshot"
+    );
+
+    const currentAfterTurn = await db.query(
+      `select member_id, event_team_id
+       from public.event_team_members
+       where event_id = $1
+       order by member_id`,
+      [lifecycle.eventId]
+    );
+    assert.deepEqual(
+      currentAfterTurn.rows,
+      reassigned
+        .map(({ member_id, event_team_id }) => ({ member_id, event_team_id }))
+        .sort((left, right) => left.member_id.localeCompare(right.member_id))
+    );
+
+    await db.query(
+      "insert into public.goals (event_turn_id, member_id) values ($1, $2)",
+      [turnId, memberIds[0]]
+    );
+    await assert.rejects(
+      db.query(
+        "insert into public.goals (match_id, event_turn_id, member_id) values ($1, $2, $3)",
+        [lifecycle.matchId, turnId, memberIds[0]]
+      ),
+      /goals_exactly_one_owner_check/i
+    );
+    await assert.rejects(
+      db.query("insert into public.goals (member_id) values ($1)", [memberIds[0]]),
+      /goals_exactly_one_owner_check/i
+    );
+    const nonParticipantId = backup.data.members.at(6)?.id;
+    if (nonParticipantId) {
+      await assert.rejects(
+        db.query(
+          "insert into public.goals (event_turn_id, member_id) values ($1, $2)",
+          [turnId, nonParticipantId]
+        ),
+        /goals_turn_member_fkey/i
+      );
+    }
+
+    return { turnId };
   });
+
+  assert.equal(
+    Number(
+      await scalar(db, "select count(*) from public.goals where event_turn_id = $1", [turnLifecycle.turnId])
+    ),
+    1
+  );
 
   await setRole(db, "service_role", async () => {
     const eventId = await scalar(
@@ -399,13 +640,25 @@ try {
         );
       }
     }
+
+    const turnId = await scalar(
+      db,
+      "select id from public.event_turns where event_id = $1 and turn_number = 1",
+      [eventId]
+    );
+    await db.query(
+      `insert into public.goals (event_turn_id, member_id, scored_at)
+       values ($1, $2, '2099-04-01T03:00:00Z')`,
+      [turnId, memberIds[0]]
+    );
   });
 
-  await setRole(db, "anon", async () => {
+  await setAuthUser(db, approvedUserId);
+  await setRole(db, "authenticated", async () => {
     assert.equal(
       await scalar(
         db,
-        "select has_function_privilege('anon', 'public.get_public_rankings(date,date)', 'execute')"
+        "select has_function_privilege('authenticated', 'public.get_public_rankings(date,date)', 'execute')"
       ),
       true
     );
@@ -414,8 +667,11 @@ try {
     );
     const target = rankingRows.rows.find((row) => row.member_id === memberIds[0]);
     assert(target, "ranking must include every member");
-    assert.equal(Number(target.total_goals), 2, "JST day boundaries must be inclusive by date");
-    assert.equal(Number(target.total_seconds), 30);
+    assert.equal(
+      Number(target.total_goals),
+      3,
+      "ranking must combine two legacy match goals and one turn goal"
+    );
     assert.equal(Number(target.participated_events), 1);
     assert.equal(Number(target.total_events), 1);
     assert.equal(Number(target.rank), 1);
@@ -430,12 +686,42 @@ try {
     );
   });
 
+  await setAuthUser(db, null);
   await setRole(db, "anon", async () => {
-    assert.equal(Number(await scalar(db, "select count(*) from public.events")) > 0, true);
+    await assert.rejects(
+      db.query("select count(*) from public.events"),
+      /permission denied/i
+    );
+    await assert.rejects(
+      db.query("select * from public.get_public_rankings('2099-04-01', '2099-04-01')"),
+      /permission denied/i
+    );
     await assert.rejects(
       db.query("insert into public.events (event_date) values ('2099-02-01')"),
       /permission denied|row-level security/i
     );
+  });
+
+  await setAuthUser(db, pendingUserId);
+  await setRole(db, "authenticated", async () => {
+    assert.equal(Number(await scalar(db, "select count(*) from public.events")), 0);
+    assert.equal(Number(await scalar(db, "select count(*) from public.app_users")), 1);
+    assert.equal(await scalar(db, "select status from public.app_users"), "pending");
+  });
+
+  await setAuthUser(db, approvedUserId);
+  await setRole(db, "authenticated", async () => {
+    assert.equal(Number(await scalar(db, "select count(*) from public.events")) > 0, true);
+    assert.equal(Number(await scalar(db, "select count(*) from public.app_users")), 1);
+    await assert.rejects(
+      db.query("update public.app_users set status = 'approved' where id = $1", [pendingUserId]),
+      /permission denied|row-level security/i
+    );
+  });
+
+  await setAuthUser(db, adminUserId);
+  await setRole(db, "authenticated", async () => {
+    assert.equal(Number(await scalar(db, "select count(*) from public.app_users")), 3);
   });
 
   await db.exec(await readFile(ROLLBACK_PATH, "utf8"));
@@ -488,8 +774,10 @@ try {
         "3-team event",
         "match lifecycle",
         "atomic event-team reassignment and lineup snapshots",
-        "public ranking RPC with JST boundaries",
-        "anon write rejection",
+        "idempotent LINE auth and turn migration",
+        "turn snapshots and exclusive goal ownership",
+        "authenticated ranking RPC with legacy and turn goals",
+        "approved-user RLS and anonymous access rejection",
         "legacy-write rollback",
       ],
     })}\n`
